@@ -1,0 +1,16 @@
+sessions:
+  - name: user
+    token_type: Bearer
+    token_env: HUNTEROPS_USER_TOKEN
+    cookie_env: HUNTEROPS_USER_COOKIE
+    headers: {}
+  - name: user_b
+    token_type: Bearer
+    token_env: HUNTEROPS_USER_B_TOKEN
+    cookie_env: HUNTEROPS_USER_B_COOKIE
+    headers: {}
+  - name: admin
+    token_type: Bearer
+    token_env: HUNTEROPS_ADMIN_TOKEN
+    cookie_env: HUNTEROPS_ADMIN_COOKIE
+    headers: {}

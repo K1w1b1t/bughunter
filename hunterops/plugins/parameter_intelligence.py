@@ -1,0 +1,341 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+from datetime import UTC, datetime
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from hunterops.evidence import save_http_evidence
+from hunterops.http_client import request_http_async
+from hunterops.intelligence import http_diff_score
+from hunterops.plugin_base import Plugin
+from hunterops.storage import PostgresStorage
+from hunterops.types import Finding, Task
+
+SCRIPT_RE = re.compile(r"""<script[^>]+src=['"]([^'"]+)['"]""", re.IGNORECASE)
+JS_OBJ_KEY_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_\-]{1,50})['"]\s*:""")
+PARAM_HINT_RE = re.compile(r"""[?&]([A-Za-z0-9_\-]{1,50})=""")
+EMAIL_RE = re.compile(r"""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
+UUID_RE = re.compile(r"""\b[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}\b""")
+
+
+class _FormParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fields: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() not in {"input", "select", "textarea"}:
+            return
+        amap = {k.lower(): (v or "") for k, v in attrs}
+        name = amap.get("name", "").strip()
+        if name:
+            self.fields.add(name)
+
+
+def infer_param_type(name: str) -> str:
+    n = name.lower()
+    if any(k in n for k in ("email", "e-mail", "mail")):
+        return "email"
+    if any(k in n for k in ("id", "uid", "user_id", "account_id", "invoice_id", "order_id", "profile_id")):
+        return "numeric_id"
+    if any(k in n for k in ("identifier", "reference", "ref")):
+        return "identifier"
+    if any(k in n for k in ("token", "jwt", "session", "auth", "key", "secret")):
+        return "token"
+    if any(k in n for k in ("url", "uri", "redirect", "callback")):
+        return "url"
+    if any(k in n for k in ("file", "image", "avatar", "upload")):
+        return "file"
+    if any(k in n for k in ("enabled", "active", "flag", "is_")):
+        return "boolean"
+    if any(k in n for k in ("count", "page", "limit", "offset", "qty", "amount", "number")):
+        return "number"
+    return "string"
+
+
+def attack_vectors(param_type: str) -> list[str]:
+    mapping = {
+        "email": ["data-exposure-review", "privacy-review"],
+        "numeric_id": ["access-pattern-check", "object-reference-check"],
+        "identifier": ["access-pattern-check", "object-reference-check"],
+        "token": ["token-consistency-check", "auth-context-check"],
+        "url": ["open-redirect-indicator-check", "ssrf-indicator-check"],
+        "file": ["file-handling-review"],
+        "boolean": ["logic-branch-review"],
+        "number": ["range/overflow-review"],
+        "string": ["input-validation-review"],
+    }
+    return mapping.get(param_type, ["input-validation-review"])
+
+
+def set_query(url: str, key: str, value: str) -> str:
+    p = urlparse(url)
+    q = parse_qs(p.query)
+    q[key] = [value]
+    flat = []
+    for k, vals in q.items():
+        for v in vals:
+            flat.append((k, v))
+    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(flat), p.fragment))
+
+
+def _json_keys(text: str) -> list[str]:
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return []
+    if isinstance(obj, dict):
+        return sorted(list(obj.keys()))
+    return []
+
+
+def _path(value: str):
+    from pathlib import Path
+
+    return Path(value)
+
+
+class PluginImpl(Plugin):
+    name = "parameter_intelligence"
+
+    async def run(self, task: Task, context: dict) -> list[Finding]:
+        cfg = context["config"].get("modules", {}).get(self.name, {})
+        timeout = int(context["runtime"]["timeout_seconds"])
+        base = f"https://{task.target}"
+        seeds = cfg.get("seed_paths", ["/", "/search?q=test", "/api/users?id=1", "/api/orders?order_id=1001"])
+        run_id = str(task.payload.get("run_id", "") if isinstance(task.payload, dict) else "")
+        evidence_root = _path(cfg.get("evidence_dir", "data/evidence/engine"))
+        max_safe_probes = int(cfg.get("max_safe_probes", 25))
+
+        endpoint_params: dict[str, set[str]] = {}
+        script_urls: set[str] = set()
+        req_resp: list[dict[str, object]] = []
+        for p in seeds:
+            url = p if p.startswith("http") else f"{base}{p}"
+            r = await request_http_async("GET", url, headers={}, timeout=timeout)
+            text = str(r.get("text", ""))
+            ep = urlparse(url).path or "/"
+            req_resp.append(
+                {
+                    "request": {"method": "GET", "url": url, "headers": {}},
+                    "response": {"status": r.get("status", 0), "length": r.get("length", 0)},
+                    "headers": r.get("headers", {}),
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "discovery_source": "parameter_intelligence",
+                }
+            )
+
+            qp = set(parse_qs(urlparse(url).query).keys()) | set(PARAM_HINT_RE.findall(url))
+            if qp:
+                endpoint_params.setdefault(ep, set()).update(qp)
+
+            fp = _FormParser()
+            try:
+                fp.feed(text)
+            except Exception:
+                pass
+            if fp.fields:
+                endpoint_params.setdefault(ep, set()).update(fp.fields)
+
+            for src in SCRIPT_RE.findall(text):
+                if src.startswith("http"):
+                    script_urls.add(src)
+                elif src.startswith("/"):
+                    script_urls.add(base + src)
+
+            if "application/json" in str((r.get("headers") or {}).get("Content-Type", "")).lower():
+                try:
+                    obj = json.loads(text)
+                    if isinstance(obj, dict):
+                        endpoint_params.setdefault(ep, set()).update({str(k) for k in obj.keys()})
+                except Exception:
+                    pass
+
+        for jsu in sorted(script_urls)[:30]:
+            if urlparse(jsu).netloc not in {"", task.target}:
+                continue
+            jsr = await request_http_async("GET", jsu, headers={}, timeout=timeout)
+            js = str(jsr.get("text", ""))
+            keys = set(JS_OBJ_KEY_RE.findall(js))
+            if keys:
+                endpoint_params.setdefault(urlparse(jsu).path or "/", set()).update(keys)
+
+        if not endpoint_params:
+            return []
+        typed: list[dict[str, object]] = []
+        db_rows: list[dict[str, object]] = []
+        entity_rows: list[dict[str, object]] = []
+        for ep, params in endpoint_params.items():
+            for p in sorted(params):
+                ptype = infer_param_type(p)
+                row = {
+                    "endpoint": ep,
+                    "parameter": p,
+                    "type": ptype,
+                    "attack_vectors": attack_vectors(ptype),
+                }
+                typed.append(row)
+                db_rows.append(
+                    {
+                        "endpoint": ep,
+                        "method": "GET",
+                        "param_name": p,
+                        "param_location": "query",
+                        "param_type": ptype,
+                        "risk_score": 70.0 if ptype in {"numeric_id", "identifier"} else 35.0,
+                        "discovery_source": "parameter_intelligence",
+                        "evidence_ref": "",
+                    }
+                )
+
+        findings: list[Finding] = [
+            Finding(
+                plugin=self.name,
+                target=task.target,
+                category="parameter_intelligence",
+                severity="info",
+                title=f"Parameter intelligence mapped {len(typed)} endpoint-parameter relations",
+                evidence={"request_response_sample": req_resp[:25], "parameter_map_sample": typed[:200]},
+                metadata={
+                    "novelty": 75,
+                    "confidence": 80,
+                    "impact": 44,
+                    "discovery_source": "parameter_intelligence",
+                    "parameters": typed,
+                },
+            )
+        ]
+
+        # Safe IDOR/logic probing (non-destructive): only id-like params, tiny bounded set.
+        probes = 0
+        for item in typed:
+            if probes >= max_safe_probes:
+                break
+            ptype = str(item.get("type", ""))
+            if ptype not in {"numeric_id", "identifier"}:
+                continue
+            ep = str(item.get("endpoint", ""))
+            prm = str(item.get("parameter", ""))
+            if not ep or not prm:
+                continue
+            base_url = f"{base}{ep}" if ep.startswith("/") else ep
+            u1 = set_query(base_url, prm, "1")
+            u2 = set_query(base_url, prm, "2")
+            r1 = await request_http_async("GET", u1, headers={}, timeout=timeout)
+            r2 = await request_http_async("GET", u2, headers={}, timeout=timeout)
+            diff = http_diff_score(
+                {"status": r1.get("status", 0), "length": r1.get("length", 0), "json_keys": _json_keys(str(r1.get("text", "")))},
+                {"status": r2.get("status", 0), "length": r2.get("length", 0), "json_keys": _json_keys(str(r2.get("text", "")))},
+            )
+            probes += 1
+            if int(r1.get("status", 0)) == 200 and int(r2.get("status", 0)) == 200 and int(diff.get("anomaly_score", 0)) >= 40:
+                leaked_identifiers = sorted(list(set(EMAIL_RE.findall(str(r2.get("text", ""))) + UUID_RE.findall(str(r2.get("text", ""))))))[:25]
+                ev = save_http_evidence(
+                    evidence_root,
+                    self.name,
+                    task.target,
+                    {"method": "GET", "url": u2, "headers": {}},
+                    {"base_request_url": u1, "base_response": {"status": r1.get("status", 0), "length": r1.get("length", 0)}, "modified_response": {"status": r2.get("status", 0), "length": r2.get("length", 0)}, "diff": diff},
+                )
+                findings.append(
+                    Finding(
+                        plugin=self.name,
+                        target=task.target,
+                        category="idor_logic_signal",
+                        severity="high",
+                        title=f"High-confidence object-access anomaly for parameter {prm}",
+                        evidence=ev
+                        | {
+                            "base_url": u1,
+                            "modified_url": u2,
+                            "tested_parameter": prm,
+                            "response_diff": diff,
+                            "leaked_identifiers": leaked_identifiers,
+                            "evidence_ref": ev.get("response_file", ""),
+                        },
+                        metadata={
+                            "novelty": 88,
+                            "confidence": 84,
+                            "confidence_score": 84,
+                            "impact": 82,
+                            "discovery_source": "parameter_intelligence",
+                            "spawn_tasks": [
+                                {
+                                    "plugin": "behavioral_diff_engine",
+                                    "target": task.target,
+                                    "payload": {
+                                        "paths": ["/api/password/recover", "/api/account/update", "/api/profile/update"],
+                                        "leaked_indicators": leaked_identifiers,
+                                        "trigger": "idor_to_ato_chain",
+                                        "priority_score": 100,
+                                    },
+                                },
+                                {
+                                    "plugin": "context_aware_fuzzing_engine",
+                                    "target": task.target,
+                                    "payload": {
+                                        "trigger": "idor_to_ato_chain",
+                                        "priority_score": 100,
+                                    },
+                                },
+                            ],
+                        },
+                        )
+                    )
+                for ident in leaked_identifiers:
+                    etype = "email" if "@" in ident else "uuid"
+                    entity_rows.append(
+                        {
+                            "entity_type": etype,
+                            "entity_value": ident,
+                            "source_plugin": self.name,
+                            "source_endpoint": ep,
+                            "confidence_score": 86 if etype == "uuid" else 84,
+                            "metadata": {"trigger": "idor_logic_signal", "evidence_ref": ev.get("response_file", "")},
+                        }
+                    )
+                if prm.lower() in {"id", "uid", "user_id", "account_id", "order_id", "invoice_id", "profile_id"}:
+                    entity_rows.append(
+                        {
+                            "entity_type": "numeric_id",
+                            "entity_value": "1",
+                            "source_plugin": self.name,
+                            "source_endpoint": ep,
+                            "confidence_score": 68,
+                            "metadata": {"trigger": "safe_probe_seed", "parameter": prm},
+                        }
+                    )
+                    entity_rows.append(
+                        {
+                            "entity_type": "numeric_id",
+                            "entity_value": "2",
+                            "source_plugin": self.name,
+                            "source_endpoint": ep,
+                            "confidence_score": 68,
+                            "metadata": {"trigger": "safe_probe_seed", "parameter": prm},
+                        }
+                    )
+                for dbr in db_rows:
+                    if str(dbr.get("endpoint", "")) == ep and str(dbr.get("param_name", "")) == prm:
+                        dbr["evidence_ref"] = ev.get("response_file", "")
+                        dbr["risk_score"] = 88.0
+
+        # Persist endpoint parameters when postgres is enabled.
+        pg_cfg = context["config"].get("storage", {}).get("postgres", {})
+        pg_enabled = bool(pg_cfg.get("enabled", False))
+        dsn_env = str(pg_cfg.get("dsn_env", "HUNTEROPS_POSTGRES_DSN"))
+        dsn = os.getenv(dsn_env, "")
+        if pg_enabled and dsn and run_id and db_rows:
+            try:
+                storage = PostgresStorage(dsn=dsn, enabled=True)
+                storage.ensure_research_schema()
+                storage.upsert_endpoint_parameters(run_id=run_id, rows=db_rows)
+                if entity_rows:
+                    storage.upsert_discovered_entities(run_id=run_id, target=task.target, rows=entity_rows)
+            except Exception:
+                pass
+
+        return findings

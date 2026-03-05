@@ -1,0 +1,31 @@
+program_profiles:
+- name: example-public-program
+  likely_stack:
+  - nginx
+  - nodejs
+  - postgresql
+  preferred_bug_classes:
+  - idor
+  - authz
+  - business_logic
+  - ssrf
+  out_of_scope_details:
+  - DoS and stress tests
+  - Social engineering
+  scoring_bias:
+    novelty_weight: 0.3
+    payout_weight: 0.26
+    acceptance_weight: 0.3
+    criticality_weight: 0.15
+  historical_performance:
+    avg_payout_usd: 600.0
+    acceptance_rate: 0.5
+    duplicate_rate: 0.5
+    top_assets:
+    - api.example.com
+  auth:
+    enabled: false
+    login_url: ''
+    username_env: ''
+    password_env: ''
+    session_cookie_name: ''

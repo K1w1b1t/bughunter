@@ -1,0 +1,65 @@
+orchestration:
+  controller_language: "python"
+  strategy: "python_orchestrates_go_binaries_via_subprocess"
+
+recon:
+  languages:
+    - python
+    - go
+    - bash
+  tools:
+    subdomain:
+      - "subfinder -d {target} -silent"
+      - "amass enum -passive -d {target}"
+      - "assetfinder --subs-only {target}"
+    dns:
+      - "dnsx -silent -a -resp"
+    web_probe:
+      - "httpx -silent -status-code -title -tech-detect"
+    historical:
+      - "waybackurls {target}"
+      - "gau {target}"
+    processing:
+      - "jq"
+
+enumeration_crawling:
+  languages:
+    - python
+    - go
+    - nodejs
+  tools:
+    - "katana -silent -u {url}"
+    - "hakrawler -url {url} -plain"
+    - "gospider -s {url} -q --json"
+  python_libs:
+    - scrapy
+    - beautifulsoup4
+  note: "Use Node.js browser automation for JS-heavy applications."
+
+fuzzing:
+  rule: "high_volume_use_ffuf_go; custom_logic_use_python"
+  tools:
+    - "ffuf -w {wordlist} -u {url}/FUZZ -mc 200,204,301,302,307,401,403"
+    - "gobuster dir -u {url} -w {wordlist}"
+    - "wfuzz -w {wordlist} {url}/FUZZ"
+    - "dirsearch -u {url} -w {wordlist}"
+
+automation_js:
+  languages:
+    - python
+    - nodejs
+  tools:
+    - playwright
+    - puppeteer
+    - selenium
+  note: "Prefer Playwright for modern SPAs."
+
+vulnerability_testing:
+  baseline:
+    - "nuclei -silent -severity critical,high,medium -t templates/nuclei"
+  validation:
+    - "dalfox"
+    - "sqlmap"
+    - "XSStrike"
+    - "commix"
+  rule: "Use nuclei for broad signal; validate with targeted scripts/PoCs."

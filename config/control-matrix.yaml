@@ -1,0 +1,85 @@
+baseline:
+  name: hunterops-professional-baseline
+  version: "1.0"
+  standards:
+    - id: OWASP-WSTG
+      ref: "https://owasp.org/www-project-web-security-testing-guide/"
+    - id: OWASP-ASVS
+      ref: "https://owasp.org/www-project-application-security-verification-standard/"
+    - id: OWASP-API-TOP-10
+      ref: "https://owasp.org/API-Security/"
+    - id: MITRE-ATTACK
+      ref: "https://attack.mitre.org/"
+    - id: CWE
+      ref: "https://cwe.mitre.org/"
+    - id: CVSS-v3.1
+      ref: "https://www.first.org/cvss/"
+  required_surfaces:
+    - web
+    - api
+    - auth
+    - cloud
+
+test_controls:
+  - id: CTRL-API-AUTHZ-IDOR
+    test_type: authorization_object_level
+    surface: api
+    owasp:
+      wstg: ["WSTG-ATHZ-02"]
+      asvs: ["V4.1", "V4.2"]
+      api_top_10: ["API1:2023"]
+    cwe: ["CWE-639", "CWE-285"]
+    mitre_attack: ["T1190"]
+    cvss_guidance: "Base score usually medium to high depending on exposed data sensitivity."
+
+  - id: CTRL-WEB-XSS
+    test_type: input_validation_xss
+    surface: web
+    owasp:
+      wstg: ["WSTG-INPV-01", "WSTG-INPV-02"]
+      asvs: ["V5.3"]
+      api_top_10: []
+    cwe: ["CWE-79"]
+    mitre_attack: ["T1059.007"]
+    cvss_guidance: "Context-sensitive; raise severity for privileged or stored execution contexts."
+
+  - id: CTRL-AUTH-SESSION
+    test_type: authentication_session_controls
+    surface: auth
+    owasp:
+      wstg: ["WSTG-ATHN-01", "WSTG-SESS-01"]
+      asvs: ["V2.1", "V3.1", "V3.2"]
+      api_top_10: ["API2:2023"]
+    cwe: ["CWE-287", "CWE-613"]
+    mitre_attack: ["T1078"]
+    cvss_guidance: "High impact when compromise allows account takeover."
+
+  - id: CTRL-CLOUD-MISCONFIG
+    test_type: cloud_storage_and_exposure
+    surface: cloud
+    owasp:
+      wstg: []
+      asvs: ["V1.14"]
+      api_top_10: ["API8:2023"]
+    cwe: ["CWE-16", "CWE-200"]
+    mitre_attack: ["T1530"]
+    cvss_guidance: "Prioritize by public exposure and sensitivity of accessible data."
+
+risk_model:
+  score_weights:
+    technical_severity: 0.35
+    exploitability: 0.25
+    asset_criticality: 0.25
+    acceptance_likelihood: 0.15
+  score_scale:
+    min: 0
+    max: 100
+  priority_bands:
+    - name: P1
+      min_score: 85
+    - name: P2
+      min_score: 70
+    - name: P3
+      min_score: 50
+    - name: P4
+      min_score: 0

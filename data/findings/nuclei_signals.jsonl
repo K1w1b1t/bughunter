@@ -1,0 +1,2 @@
+{"template_id":"http/misconfig/exposed-panel","accepted":false,"payout_usd":0,"tags":["panel","detect"]}
+{"template_id":"http/vulnerabilities/sqli-basic","accepted":true,"payout_usd":500,"tags":["sqli","cve"]}

@@ -1,0 +1,10 @@
+programs:
+  - name: example-public-program
+    platform: hackerone
+    in_scope:
+      - "*.example.com"
+      - "api.example.com"
+    out_of_scope:
+      - "dev.example.com"
+      - "staging.example.com"
+    notes: "replace with real scope from program page"

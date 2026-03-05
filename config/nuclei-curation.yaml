@@ -1,0 +1,14 @@
+high_signal_tags:
+  - cve
+  - misconfig
+  - exposure
+  - takeover
+  - auth-bypass
+  - sqli
+  - xss
+noise_tags:
+  - tech
+  - panel
+  - detect
+min_acceptance_rate: 0.25
+min_payout_usd: 150

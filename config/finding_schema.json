@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hunterops.local/schemas/finding_schema.json",
+  "title": "HunterOps Finding Schema",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "program",
+    "asset",
+    "surface",
+    "status",
+    "taxonomy",
+    "reproduction",
+    "business_impact",
+    "evidence",
+    "risk_factors",
+    "timeline"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 5
+    },
+    "title": {
+      "type": "string",
+      "minLength": 10
+    },
+    "summary": {
+      "type": "string"
+    },
+    "program": {
+      "type": "string",
+      "minLength": 2
+    },
+    "asset": {
+      "type": "string",
+      "minLength": 3
+    },
+    "surface": {
+      "type": "string",
+      "enum": ["web", "api", "auth", "cloud"]
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "parameter": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["new", "validated", "submitted", "duplicate", "accepted", "informative", "n/a"]
+    },
+    "taxonomy": {
+      "type": "object",
+      "required": ["cwe", "cvss", "owasp_refs", "mitre_attack"],
+      "properties": {
+        "cwe": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^CWE-[0-9]+$"},
+          "minItems": 1
+        },
+        "cvss": {
+          "type": "object",
+          "required": ["vector", "base_score", "severity"],
+          "properties": {
+            "vector": {"type": "string"},
+            "base_score": {"type": "number", "minimum": 0, "maximum": 10},
+            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]}
+          }
+        },
+        "owasp_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1
+        },
+        "mitre_attack": {
+          "type": "object",
+          "required": ["applicable", "techniques"],
+          "properties": {
+            "applicable": {"type": "boolean"},
+            "techniques": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^T[0-9]{4}(\\.[0-9]{3})?$"}
+            },
+            "notes": {"type": "string"}
+          }
+        }
+      }
+    },
+    "reproduction": {
+      "type": "object",
+      "required": ["verified", "success_rate", "steps"],
+      "properties": {
+        "verified": {"type": "boolean"},
+        "success_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "steps": {"type": "string", "minLength": 10}
+      }
+    },
+    "business_impact": {
+      "type": "object",
+      "required": ["validated", "statement", "proof_artifacts"],
+      "properties": {
+        "validated": {"type": "boolean"},
+        "statement": {"type": "string", "minLength": 15},
+        "proof_artifacts": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["request_file", "response_file", "timestamp_utc", "sha256", "tool_versions"],
+      "properties": {
+        "request_file": {"type": "string"},
+        "response_file": {"type": "string"},
+        "timestamp_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"},
+        "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
+        "tool_versions": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "minProperties": 1
+        }
+      }
+    },
+    "risk_factors": {
+      "type": "object",
+      "required": ["technical_severity", "exploitability", "asset_criticality", "acceptance_likelihood"],
+      "properties": {
+        "technical_severity": {"type": "integer", "minimum": 0, "maximum": 100},
+        "exploitability": {"type": "integer", "minimum": 0, "maximum": 100},
+        "asset_criticality": {"type": "integer", "minimum": 0, "maximum": 100},
+        "acceptance_likelihood": {"type": "integer", "minimum": 0, "maximum": 100}
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["control_check_passed", "negative_test_passed"],
+      "properties": {
+        "control_check_passed": {"type": "boolean"},
+        "negative_test_passed": {"type": "boolean"},
+        "notes": {"type": "string"}
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": ["first_seen_utc"],
+      "properties": {
+        "first_seen_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"},
+        "submitted_utc": {"type": "string"}
+      }
+    }
+  }
+}

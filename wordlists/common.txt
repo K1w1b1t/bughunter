@@ -1,0 +1,10 @@
+admin
+login
+api
+v1
+v2
+debug
+internal
+config
+backup
+health

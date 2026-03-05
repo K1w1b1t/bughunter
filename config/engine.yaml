@@ -1,0 +1,461 @@
+runtime:
+  concurrency: 10
+  timeout_seconds: 30
+  rate_limit_per_sec: 5
+  max_retries: 2
+  backoff_base_seconds: 1.2
+  task_queue_size: 4000
+  enable_recursive_tasks: true
+  recursion_max_depth: 5
+  recursion_max_tasks: 800
+  recursion_max_tasks_step: 200
+  recursion_max_tasks_cap: 6000
+  stealth_mode: true
+  proxies: []
+  wordlists:
+    default: "wordlists/common.txt"
+
+feedback:
+  file: "data/processed/feedback_weights.json"
+
+program_packs:
+  file: "config/program_packs.yaml"
+
+storage:
+  postgres:
+    enabled: true
+    dsn_env: "HUNTEROPS_POSTGRES_DSN"
+
+plugins:
+  - module: platform_sync
+    enabled: false
+  - module: polyglot_stack
+    enabled: true
+  - module: cve_intel
+    enabled: true
+  - module: cve_matcher
+    enabled: true
+  - module: asset_discovery_engine
+    enabled: true
+  - module: recon_engine
+    enabled: true
+  - module: surface_massive
+    enabled: true
+  - module: crawler_intel
+    enabled: true
+  - module: crawler_intelligent
+    enabled: true
+  - module: intelligent_crawler
+    enabled: true
+  - module: javascript_deep_analysis
+    enabled: true
+  - module: deep_js_analyzer
+    enabled: true
+  - module: deep_js_intelligence
+    enabled: true
+  - module: hidden_route_discovery
+    enabled: true
+  - module: hidden_route_detector
+    enabled: true
+  - module: parameter_enum
+    enabled: true
+  - module: surface_expansion
+    enabled: true
+  - module: js_route_mapper
+    enabled: true
+  - module: surface_mapper
+    enabled: true
+  - module: attack_graph_builder
+    enabled: true
+  - module: parameter_intelligence
+    enabled: true
+  - module: differential_auth_prover
+    enabled: true
+  - module: entity_cross_pollinator
+    enabled: true
+  - module: smart_payload_engine
+    enabled: true
+  - module: context_aware_fuzzing_engine
+    enabled: true
+  - module: behavioral_diff_engine
+    enabled: true
+  - module: idor_intelligence
+    enabled: true
+  - module: vulnerability_detection_engine
+    enabled: true
+  - module: vulnerability_correlation_engine
+    enabled: true
+  - module: evidence_collector
+    enabled: true
+  - module: vulnerability_engine
+    enabled: true
+  - module: idor_detection_engine
+    enabled: true
+  - module: response_diff_engine
+    enabled: true
+  - module: poc_generator
+    enabled: true
+  - module: report_builder
+    enabled: true
+  - module: report_synthesis
+    enabled: true
+  - module: security_report_builder
+    enabled: true
+  - module: recon
+    enabled: true
+  - module: fingerprint
+    enabled: true
+  - module: sensitive_endpoints
+    enabled: true
+  - module: undocumented_api
+    enabled: true
+  - module: graphql_scan
+    enabled: true
+  - module: fuzz
+    enabled: true
+  - module: fuzz_smart
+    enabled: true
+  - module: scan
+    enabled: true
+  - module: sensitive_data
+    enabled: true
+  - module: auth_compare
+    enabled: true
+  - module: idor_auto
+    enabled: true
+  - module: role_access
+    enabled: true
+  - module: auth_token_tests
+    enabled: true
+  - module: race_basic
+    enabled: true
+  - module: payment_logic
+    enabled: true
+  - module: deep_endpoint
+    enabled: true
+  - module: stateful_flows
+    enabled: true
+  - module: cors
+    enabled: true
+  - module: takeover
+    enabled: true
+  - module: playwright_capture
+    enabled: true
+
+modules:
+  asset_discovery_engine:
+    subdomain_prefixes: ["www", "api", "app", "admin", "staging", "dev"]
+    allowed_scope_suffixes: ["example.com"]
+  recon_engine:
+    seed_paths:
+      - "/"
+      - "/login"
+      - "/api"
+      - "/docs"
+    max_pages: 15
+    authenticated_crawling: false
+    sessions_file: "data/sessions.yaml"
+  surface_massive:
+    commands:
+      - "subfinder -d {target} -silent"
+      - "amass enum -passive -d {target}"
+      - "assetfinder --subs-only {target}"
+      - "gau {target}"
+      - "waybackurls {target}"
+      - "katana -u https://{target} -silent"
+  crawler_intel:
+    commands:
+      - "katana -u https://{target} -silent -jc"
+      - "hakrawler -url https://{target} -plain"
+      - "gospider -s https://{target} -q"
+  crawler_intelligent:
+    max_pages: 25
+    max_depth: 2
+  intelligent_crawler:
+    max_pages: 20
+    max_depth: 2
+    crawl_delay_ms: 120
+  javascript_deep_analysis:
+    max_scripts: 25
+    seed_paths:
+      - "/"
+      - "/app.js"
+      - "/main.js"
+      - "/static/js/app.js"
+  deep_js_analyzer:
+    max_scripts: 30
+    seed_paths:
+      - "/"
+      - "/app.js"
+      - "/main.js"
+      - "/static/js/app.js"
+  deep_js_intelligence:
+    max_scripts: 30
+    entropy_threshold: 3.7
+    seed_paths:
+      - "/"
+      - "/app.js"
+      - "/main.js"
+      - "/static/js/app.js"
+  hidden_route_discovery:
+    route_seeds:
+      - "/api/"
+      - "/api/v1/"
+      - "/v1/"
+      - "/internal/"
+      - "/admin/"
+      - "/debug/"
+      - "/test/"
+      - "/config/"
+  hidden_route_detector:
+    route_seeds:
+      - "/api/"
+      - "/api/v1/"
+      - "/internal/"
+      - "/admin/"
+      - "/debug/"
+      - "/config/"
+    source_paths:
+      - "/"
+      - "/swagger.json"
+      - "/openapi.json"
+      - "/api-docs"
+      - "/main.js"
+      - "/app.js"
+  parameter_enum:
+    seed_paths:
+      - "/"
+      - "/search"
+      - "/api"
+      - "/api/users?id=1"
+  surface_expansion:
+    seed_endpoints:
+      - "/api/users"
+      - "/api/orders"
+      - "/api/profile"
+      - "/api/invoices"
+  js_route_mapper:
+    max_scripts: 30
+  surface_mapper:
+    seed_paths:
+      - "/"
+      - "/api"
+      - "/login"
+      - "/admin"
+      - "/graphql"
+      - "/api/users"
+  attack_graph_builder:
+    findings_source: "data/reports/engine/findings.json"
+  parameter_intelligence:
+    seed_paths:
+      - "/"
+      - "/search?q=test"
+      - "/api/users?id=1"
+      - "/api/orders?order_id=1001"
+    evidence_dir: "data/evidence/engine"
+    max_safe_probes: 25
+  entity_cross_pollinator:
+    cross_pollination_depth: 5
+    max_entities: 120
+    max_endpoints: 180
+    fanout_per_endpoint: 4
+    max_generated_tasks: 220
+    target_plugins:
+      - "parameter_intelligence"
+      - "differential_auth_prover"
+  differential_auth_prover:
+    sessions_file: "data/sessions.yaml"
+    auth_context_a: "user"
+    auth_context_b: "user_b"
+    session_owner: "user"
+    session_other: "user_b"
+    min_structure_similarity_pct: 90
+    min_content_similarity_pct: 85
+    max_candidates: 80
+    max_entities: 120
+    max_probes: 90
+    high_risk_param_types:
+      - "numeric_id"
+      - "identifier"
+      - "uuid"
+      - "token"
+  hackerone_manager:
+    enabled: false
+    strict_scope_enforcement: true
+    base_url: "https://api.hackerone.com/v1"
+    api_user_env: "HACKERONE_API_USER"
+    api_token_env: "HACKERONE_API_TOKEN"
+    program_handles: []
+    structured_scope_only: true
+    poll_interval_seconds: 900
+    scope_cache_file: "data/processed/h1_scope_cache.json"
+    default_target_rps: 1.0
+  oob_engine:
+    enabled: false
+    provider: "custom"
+    callback_domain_env: "HUNTEROPS_OOB_CALLBACK_DOMAIN"
+    poll_url_env: "HUNTEROPS_OOB_POLL_URL"
+    api_token_env: "HUNTEROPS_OOB_API_TOKEN"
+    callback_domain: ""
+    poll_url: ""
+    poll_interval_seconds: 30
+    max_injections_per_target: 80
+    state_file: "data/processed/oob_state.json"
+    events_file: "data/processed/oob_events.jsonl"
+  smart_payload_engine:
+    parameter_source: "data/reports/engine/findings.json"
+    out_file: "data/processed/smart_payloads.json"
+  context_aware_fuzzing_engine:
+    payload_file: "data/processed/smart_payloads.json"
+    sessions_file: "data/sessions.yaml"
+    max_tests: 80
+  behavioral_diff_engine:
+    sessions_file: "data/sessions.yaml"
+    paths:
+      - "/api/me"
+      - "/api/profile"
+      - "/api/orders?id=1"
+      - "/search?q=test"
+  idor_intelligence:
+    sessions_file: "data/sessions.yaml"
+    candidate_urls:
+      - "https://{target}/api/users?id=1"
+      - "https://{target}/api/orders?order_id=1001"
+      - "https://{target}/api/invoices?invoice_id=1001"
+  vulnerability_detection_engine:
+    findings_source: "data/reports/engine/findings.json"
+  vulnerability_correlation_engine:
+    findings_source: "data/reports/engine/findings.json"
+  evidence_collector:
+    findings_source: "data/reports/engine/findings.json"
+    out_dir: "data/evidence/engine_collected"
+  vulnerability_engine:
+    paths:
+      - "/"
+      - "/api"
+      - "/debug"
+      - "/admin"
+      - "/download?file=report.pdf"
+      - "/redirect?next=/dashboard"
+  idor_detection_engine:
+    sessions_file: "data/sessions.yaml"
+    evidence_dir: "data/evidence/engine"
+    candidate_urls:
+      - "https://{target}/api/users?id=1"
+      - "https://{target}/api/orders?order_id=1001"
+      - "https://{target}/api/invoices?invoice_id=1001"
+  response_diff_engine:
+    paths:
+      - "/api/me"
+      - "/api/profile"
+      - "/api/orders?id=1"
+      - "/search?q=test"
+  poc_generator:
+    findings_source: "data/reports/engine/findings.json"
+    out_dir: "data/reports/engine/poc_auto"
+  report_builder:
+    findings_source: "data/reports/engine/findings.json"
+    out_dir: "data/reports/engine/bug_reports"
+    min_risk: 55
+  report_synthesis:
+    out_dir: "data/reports"
+    confidence_threshold: 80
+    auth_context_a: "Auth_Context_A"
+    auth_context_b: "Auth_Context_B"
+    enable_notifications: true
+    enable_os_notification: true
+    webhook_env: "HUNTEROPS_CRITICAL_WEBHOOK"
+    webhook_url: ""
+  security_report_builder:
+    findings_source: "data/reports/engine/findings.json"
+    out_dir: "data/reports/engine/security_reports"
+  recon:
+    commands:
+      - "subfinder -d {target} -silent"
+      - "amass enum -passive -d {target}"
+      - "assetfinder --subs-only {target}"
+      - "gau {target}"
+      - "waybackurls {target}"
+  fingerprint:
+    commands:
+      - "httpx -u https://{target} -silent -status-code -title -tech-detect"
+  fuzz:
+    commands:
+      - "ffuf -w {wordlist} -u https://{target}/FUZZ -mc 200,204,301,302,307,401,403"
+  scan:
+    commands:
+      - "nuclei -u https://{target} -silent -severity critical,high,medium -t templates/nuclei"
+  fuzz_smart:
+    commands:
+      - "ffuf -w {wordlist} -u https://{target}/FUZZ -mc 200,201,202,204,301,302,307,401,403 -of json -o -"
+  auth_compare:
+    sessions_file: "data/sessions.yaml"
+    evidence_dir: "data/evidence/engine"
+    paths:
+      - "/api/me"
+      - "/api/profile"
+      - "/api/users"
+  idor_auto:
+    sessions_file: "data/sessions.yaml"
+    evidence_dir: "data/evidence/engine"
+    candidate_urls:
+      - "https://{target}/api/profile?id=1"
+      - "https://{target}/api/invoices?invoice_id=1001"
+  role_access:
+    sessions_file: "data/sessions.yaml"
+    evidence_dir: "data/evidence/engine"
+    role_order: ["user", "admin"]
+    paths:
+      - "/admin"
+      - "/api/admin/users"
+  auth_token_tests:
+    sessions_file: "data/sessions.yaml"
+    evidence_dir: "data/evidence/engine"
+    path: "/api/me"
+  race_basic:
+    paths:
+      - "/api/coupon/apply"
+      - "/api/wallet/redeem"
+      - "/api/plan/upgrade"
+  payment_logic:
+    enabled: true
+  deep_endpoint:
+    paths:
+      - "/api/profile"
+      - "/api/orders"
+      - "/api/invoices"
+  stateful_flows:
+    sessions_file: "data/sessions.yaml"
+    evidence_dir: "data/evidence/engine"
+    flows:
+      - name: checkout
+        steps: ["/api/cart", "/api/checkout", "/api/payment/confirm"]
+      - name: upgrade
+        steps: ["/api/plan/current", "/api/plan/upgrade", "/api/plan/confirm"]
+      - name: reset
+        steps: ["/api/password/request-reset", "/api/password/confirm-reset"]
+      - name: approval
+        steps: ["/api/request/create", "/api/request/approve"]
+  sensitive_data:
+    paths:
+      - "/api/me"
+      - "/api/profile"
+      - "/api/users"
+  polyglot_stack:
+    commands:
+      - "node tools/node/spa_probe.mjs {target}"
+      - "cargo run --manifest-path tools/rust-analyzer/Cargo.toml --quiet -- {target}"
+      - "java -cp tools/jvm ApiSurfaceInspector {target}"
+      - "kotlinc -script tools/jvm/RoleDiffInspector.kt {target}"
+      - "Rscript tools/r/analytics.R data/findings/submissions.jsonl"
+  cve_intel:
+    catalog_file: "data/processed/cve_catalog.json"
+  cve_matcher:
+    catalog_file: "data/processed/cve_catalog.json"
+    probe_paths:
+      - "/"
+      - "/api"
+      - "/graphql"
+      - "/.well-known/security.txt"
+    min_token_matches: 2
+    top_n: 8
