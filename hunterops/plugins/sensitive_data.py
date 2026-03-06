@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
-from hunterops.http_client import request_http
+from hunterops.http_client import request_http_async
 from hunterops.intelligence import detect_sensitive
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
@@ -22,9 +23,13 @@ class PluginImpl(Plugin):
         urls = cfg.get("paths", ["/api/me", "/api/profile", "/api/users"])
         findings: list[Finding] = []
         hits = []
-        for p in urls:
-            url = f"https://{task.target}{p}"
-            r = request_http("GET", url, timeout=timeout)
+        target_urls = [f"https://{task.target}{p}" for p in urls]
+        responses = await asyncio.gather(
+            *(request_http_async("GET", url, timeout=timeout) for url in target_urls),
+            return_exceptions=False,
+        )
+        for idx, url in enumerate(target_urls):
+            r = responses[idx]
             if r["status"] == 0:
                 continue
             text = r["text"]
@@ -51,4 +56,3 @@ class PluginImpl(Plugin):
                 )
             )
         return findings
-

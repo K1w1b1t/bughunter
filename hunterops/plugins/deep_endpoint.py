@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlencode
 
-from hunterops.http_client import request_http
+from hunterops.http_client import request_http_async
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
@@ -25,9 +26,14 @@ class PluginImpl(Plugin):
                 ("GET", f"{base_url}?{urlencode({'include':'all','expand':'true'})}", None),
                 ("GET", f"{base_url}?{urlencode({'admin':'1','internal':'1'})}", None),
             ]
+            calls = [
+                request_http_async(method, url, body=body, timeout=timeout)
+                for method, url, body in variants
+            ]
+            raw_responses = await asyncio.gather(*calls, return_exceptions=False)
             responses = []
-            for method, url, body in variants:
-                r = request_http(method, url, body=body, timeout=timeout)
+            for idx, (method, url, _body) in enumerate(variants):
+                r = raw_responses[idx]
                 responses.append({"method": method, "url": url, "status": r["status"], "length": r["length"]})
 
             status_set = {x["status"] for x in responses}
@@ -45,4 +51,3 @@ class PluginImpl(Plugin):
                     )
                 )
         return findings
-

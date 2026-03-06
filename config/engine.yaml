@@ -10,10 +10,23 @@ runtime:
   recursion_max_tasks: 800
   recursion_max_tasks_step: 200
   recursion_max_tasks_cap: 6000
+  feedback_max_retries: 2
+  feedback_base_delay_seconds: 1.5
+  feedback_max_delay_seconds: 28
+  feedback_streak_threshold: 3
+  feedback_hard_pause_seconds: 60
   stealth_mode: true
   proxies: []
+  user_agents:
+    - "Mozilla/5.0 (compatible; Pinguinho/1.0; +https://hunterops.local)"
+    - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/121.0"
   wordlists:
     default: "wordlists/common.txt"
+
+app:
+  default_root: "/opt/hunterops"
+  root_env: "HUNTEROPS_HOME"
 
 feedback:
   file: "data/processed/feedback_weights.json"
@@ -25,6 +38,15 @@ storage:
   postgres:
     enabled: true
     dsn_env: "HUNTEROPS_POSTGRES_DSN"
+
+http_pool:
+  max_connections: 160
+  max_keepalive_connections: 48
+  keepalive_expiry: 10.0
+  verify_ssl: true
+  http2: false
+  retries: 1
+  linux_socket_tuning: true
 
 plugins:
   - module: platform_sync
@@ -71,6 +93,10 @@ plugins:
     enabled: true
   - module: differential_auth_prover
     enabled: true
+  - module: logic_prover
+    enabled: true
+  - module: auth_matrix_engine
+    enabled: true
   - module: entity_cross_pollinator
     enabled: true
   - module: smart_payload_engine
@@ -98,6 +124,8 @@ plugins:
   - module: report_builder
     enabled: true
   - module: report_synthesis
+    enabled: true
+  - module: evidence_packager
     enabled: true
   - module: security_report_builder
     enabled: true
@@ -130,6 +158,10 @@ plugins:
   - module: race_basic
     enabled: true
   - module: payment_logic
+    enabled: true
+  - module: business_logic_sniper
+    enabled: true
+  - module: race_condition_turbo
     enabled: true
   - module: deep_endpoint
     enabled: true
@@ -260,6 +292,9 @@ modules:
     max_endpoints: 180
     fanout_per_endpoint: 4
     max_generated_tasks: 220
+    max_probe_requests: 80
+    sessions_file: "data/sessions.yaml"
+    auth_context_b: "user_b"
     target_plugins:
       - "parameter_intelligence"
       - "differential_auth_prover"
@@ -279,6 +314,39 @@ modules:
       - "identifier"
       - "uuid"
       - "token"
+  auth_matrix_engine:
+    sessions_file: "data/sessions.yaml"
+    auth_context_a: "user"
+    auth_context_b: "user_b"
+    min_structure_similarity_pct: 90
+    min_confidence: 50
+    verified_threshold: 85
+    max_endpoints: 220
+    max_probes: 140
+    verified_dir: "data/evidence/verified"
+  ade_brain:
+    evidence_dir: "data/evidence/ade"
+    max_spawn_tasks: 220
+    max_boundary_candidates: 30
+  report_engine:
+    enabled: true
+    evidence_dir: "data/evidence/ade"
+    ready_dir: "data/ready_to_submit"
+    state_file: "data/processed/report_engine_state.json"
+    auto_submit_h1_draft: false
+    draft_endpoint: "https://api.hackerone.com/v1/reports/drafts"
+    identifier_env: "H1_API_IDENTIFIER"
+    token_env: "H1_API_TOKEN"
+  hackerone_sync_engine:
+    enabled: false
+    strict_sync: false
+    graphql_endpoint: "https://api.hackerone.com/graphql"
+    sync_interval_seconds: 21600
+    sync_key: "h1_public_bounty_scope_sync"
+    targets_file: "data/targets/in_scope_hosts.txt"
+    exclude_low_signal: false
+    min_signal: 0
+    attack_graph_confidence: 98
   hackerone_manager:
     enabled: false
     strict_scope_enforcement: true
@@ -300,6 +368,7 @@ modules:
     poll_url: ""
     poll_interval_seconds: 30
     max_injections_per_target: 80
+    max_concurrent_per_target: 3
     state_file: "data/processed/oob_state.json"
     events_file: "data/processed/oob_events.jsonl"
   smart_payload_engine:
@@ -366,6 +435,42 @@ modules:
     enable_os_notification: true
     webhook_env: "HUNTEROPS_CRITICAL_WEBHOOK"
     webhook_url: ""
+  discord_notifier:
+    enabled: true
+    bot_name: "Pinguinho"
+    recon_webhook_url: ""
+    findings_webhook_url: ""
+    recon_webhook_env: "HUNTEROPS_DISCORD_RECON_WEBHOOK"
+    findings_webhook_env: "HUNTEROPS_DISCORD_FINDINGS_WEBHOOK"
+    timeout_seconds: 4
+    max_concurrent: 4
+    send_startup_check: true
+  alert_router:
+    enabled: true
+    timeout_seconds: 5
+    dedupe_ttl_seconds: 1800
+    max_embed_poc_chars: 1100
+    discord_attach_threshold: 1200
+    discord_max_attachment_bytes: 7000000
+    discord_research_webhook: ""
+    discord_critical_webhook: ""
+    discord_research_env: "HUNTEROPS_DISCORD_RESEARCH_WEBHOOK"
+    discord_critical_env: "HUNTEROPS_DISCORD_CRITICAL_WEBHOOK"
+    slack_research_webhook: ""
+    slack_critical_webhook: ""
+    slack_research_env: "HUNTEROPS_SLACK_RESEARCH_WEBHOOK"
+    slack_critical_env: "HUNTEROPS_SLACK_CRITICAL_WEBHOOK"
+    report_url_base: ""
+  logic_prover:
+    sessions_file: "data/sessions.yaml"
+    auth_context_a: "user"
+    auth_context_b: "user_b"
+    min_structure_similarity_pct: 90
+    max_candidates: 90
+    max_depth: 3
+  evidence_packager:
+    out_dir: "data/evidence/bundles"
+    confidence_threshold: 80
   security_report_builder:
     findings_source: "data/reports/engine/findings.json"
     out_dir: "data/reports/engine/security_reports"
@@ -419,6 +524,26 @@ modules:
       - "/api/plan/upgrade"
   payment_logic:
     enabled: true
+  business_logic_sniper:
+    base_scheme: "https"
+    sessions_file: "data/sessions.yaml"
+    auth_context_a: "user"
+    auth_context_b: "user_b"
+    seed_paths:
+      - "/api/cart?price=100&quantity=1"
+      - "/api/checkout?amount=100&currency=USD"
+      - "/api/coupon/apply?coupon=WELCOME10&total=100"
+  race_condition_turbo:
+    base_scheme: "https"
+    sessions_file: "data/sessions.yaml"
+    auth_context: "user"
+    burst_size: 24
+    max_candidates: 12
+    variance_threshold_ms: 50.0
+    seed_paths:
+      - "/api/wallet/withdraw?amount=1"
+      - "/api/redeem?amount=1"
+      - "/api/transfer?amount=1"
   deep_endpoint:
     paths:
       - "/api/profile"

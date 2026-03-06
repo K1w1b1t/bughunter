@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from hunterops.evidence import save_http_evidence
@@ -19,6 +21,7 @@ JS_OBJ_KEY_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_\-]{1,50})['"]\s*:""")
 PARAM_HINT_RE = re.compile(r"""[?&]([A-Za-z0-9_\-]{1,50})=""")
 EMAIL_RE = re.compile(r"""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
 UUID_RE = re.compile(r"""\b[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}\b""")
+NUMERIC_ID_RE = re.compile(r"""\b[1-9][0-9]{2,18}\b""")
 
 
 class _FormParser(HTMLParser):
@@ -92,12 +95,6 @@ def _json_keys(text: str) -> list[str]:
     return []
 
 
-def _path(value: str):
-    from pathlib import Path
-
-    return Path(value)
-
-
 class PluginImpl(Plugin):
     name = "parameter_intelligence"
 
@@ -106,21 +103,31 @@ class PluginImpl(Plugin):
         timeout = int(context["runtime"]["timeout_seconds"])
         base = f"https://{task.target}"
         seeds = cfg.get("seed_paths", ["/", "/search?q=test", "/api/users?id=1", "/api/orders?order_id=1001"])
-        run_id = str(task.payload.get("run_id", "") if isinstance(task.payload, dict) else "")
-        evidence_root = _path(cfg.get("evidence_dir", "data/evidence/engine"))
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        run_id = str(payload.get("run_id", ""))
+        evidence_root = Path(str(cfg.get("evidence_dir", "data/evidence/engine")))
         max_safe_probes = int(cfg.get("max_safe_probes", 25))
+        request_delay = max(0.0, float(payload.get("request_delay_seconds", 0) or 0.0))
+        user_agent = str(payload.get("user_agent", "")).strip()
+        request_headers = {"User-Agent": user_agent} if user_agent else {}
+
+        async def _fetch(url: str) -> dict[str, object]:
+            response = await request_http_async("GET", url, headers=request_headers, timeout=timeout)
+            if request_delay > 0:
+                await asyncio.sleep(request_delay)
+            return response
 
         endpoint_params: dict[str, set[str]] = {}
         script_urls: set[str] = set()
         req_resp: list[dict[str, object]] = []
         for p in seeds:
             url = p if p.startswith("http") else f"{base}{p}"
-            r = await request_http_async("GET", url, headers={}, timeout=timeout)
+            r = await _fetch(url)
             text = str(r.get("text", ""))
             ep = urlparse(url).path or "/"
             req_resp.append(
                 {
-                    "request": {"method": "GET", "url": url, "headers": {}},
+                    "request": {"method": "GET", "url": url, "headers": request_headers},
                     "response": {"status": r.get("status", 0), "length": r.get("length", 0)},
                     "headers": r.get("headers", {}),
                     "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -157,7 +164,7 @@ class PluginImpl(Plugin):
         for jsu in sorted(script_urls)[:30]:
             if urlparse(jsu).netloc not in {"", task.target}:
                 continue
-            jsr = await request_http_async("GET", jsu, headers={}, timeout=timeout)
+            jsr = await _fetch(jsu)
             js = str(jsr.get("text", ""))
             keys = set(JS_OBJ_KEY_RE.findall(js))
             if keys:
@@ -168,6 +175,7 @@ class PluginImpl(Plugin):
         typed: list[dict[str, object]] = []
         db_rows: list[dict[str, object]] = []
         entity_rows: list[dict[str, object]] = []
+        object_rows: list[dict[str, object]] = []
         for ep, params in endpoint_params.items():
             for p in sorted(params):
                 ptype = infer_param_type(p)
@@ -224,8 +232,8 @@ class PluginImpl(Plugin):
             base_url = f"{base}{ep}" if ep.startswith("/") else ep
             u1 = set_query(base_url, prm, "1")
             u2 = set_query(base_url, prm, "2")
-            r1 = await request_http_async("GET", u1, headers={}, timeout=timeout)
-            r2 = await request_http_async("GET", u2, headers={}, timeout=timeout)
+            r1 = await _fetch(u1)
+            r2 = await _fetch(u2)
             diff = http_diff_score(
                 {"status": r1.get("status", 0), "length": r1.get("length", 0), "json_keys": _json_keys(str(r1.get("text", "")))},
                 {"status": r2.get("status", 0), "length": r2.get("length", 0), "json_keys": _json_keys(str(r2.get("text", "")))},
@@ -233,11 +241,12 @@ class PluginImpl(Plugin):
             probes += 1
             if int(r1.get("status", 0)) == 200 and int(r2.get("status", 0)) == 200 and int(diff.get("anomaly_score", 0)) >= 40:
                 leaked_identifiers = sorted(list(set(EMAIL_RE.findall(str(r2.get("text", ""))) + UUID_RE.findall(str(r2.get("text", ""))))))[:25]
+                leaked_numeric_ids = sorted(list(set(NUMERIC_ID_RE.findall(str(r2.get("text", ""))))))[:25]
                 ev = save_http_evidence(
                     evidence_root,
                     self.name,
                     task.target,
-                    {"method": "GET", "url": u2, "headers": {}},
+                    {"method": "GET", "url": u2, "headers": request_headers},
                     {"base_request_url": u1, "base_response": {"status": r1.get("status", 0), "length": r1.get("length", 0)}, "modified_response": {"status": r2.get("status", 0), "length": r2.get("length", 0)}, "diff": diff},
                 )
                 findings.append(
@@ -297,6 +306,37 @@ class PluginImpl(Plugin):
                             "metadata": {"trigger": "idor_logic_signal", "evidence_ref": ev.get("response_file", "")},
                         }
                     )
+                    object_rows.append(
+                        {
+                            "object_type": "email" if etype == "email" else "object_reference",
+                            "object_key": ident,
+                            "source_endpoint": ep,
+                            "confidence_score": 86 if etype == "uuid" else 84,
+                            "discovery_source": self.name,
+                            "metadata": {"trigger": "idor_logic_signal", "evidence_ref": ev.get("response_file", "")},
+                        }
+                    )
+                for nid in leaked_numeric_ids:
+                    entity_rows.append(
+                        {
+                            "entity_type": "numeric_id",
+                            "entity_value": nid,
+                            "source_plugin": self.name,
+                            "source_endpoint": ep,
+                            "confidence_score": 73,
+                            "metadata": {"trigger": "idor_logic_signal", "evidence_ref": ev.get("response_file", "")},
+                        }
+                    )
+                    object_rows.append(
+                        {
+                            "object_type": "numeric_id",
+                            "object_key": nid,
+                            "source_endpoint": ep,
+                            "confidence_score": 73,
+                            "discovery_source": self.name,
+                            "metadata": {"trigger": "idor_logic_signal", "evidence_ref": ev.get("response_file", "")},
+                        }
+                    )
                 if prm.lower() in {"id", "uid", "user_id", "account_id", "order_id", "invoice_id", "profile_id"}:
                     entity_rows.append(
                         {
@@ -308,6 +348,16 @@ class PluginImpl(Plugin):
                             "metadata": {"trigger": "safe_probe_seed", "parameter": prm},
                         }
                     )
+                    object_rows.append(
+                        {
+                            "object_type": "numeric_id",
+                            "object_key": "1",
+                            "source_endpoint": ep,
+                            "confidence_score": 66,
+                            "discovery_source": self.name,
+                            "metadata": {"trigger": "safe_probe_seed", "parameter": prm},
+                        }
+                    )
                     entity_rows.append(
                         {
                             "entity_type": "numeric_id",
@@ -315,6 +365,16 @@ class PluginImpl(Plugin):
                             "source_plugin": self.name,
                             "source_endpoint": ep,
                             "confidence_score": 68,
+                            "metadata": {"trigger": "safe_probe_seed", "parameter": prm},
+                        }
+                    )
+                    object_rows.append(
+                        {
+                            "object_type": "numeric_id",
+                            "object_key": "2",
+                            "source_endpoint": ep,
+                            "confidence_score": 66,
+                            "discovery_source": self.name,
                             "metadata": {"trigger": "safe_probe_seed", "parameter": prm},
                         }
                     )
@@ -335,6 +395,28 @@ class PluginImpl(Plugin):
                 storage.upsert_endpoint_parameters(run_id=run_id, rows=db_rows)
                 if entity_rows:
                     storage.upsert_discovered_entities(run_id=run_id, target=task.target, rows=entity_rows)
+                if object_rows:
+                    storage.upsert_objects(run_id=run_id, target=task.target, rows=object_rows)
+                    storage.upsert_attack_graph_edges(
+                        run_id=run_id,
+                        target=task.target,
+                        edges=[
+                            {
+                                "src_type": "endpoint",
+                                "src_key": str(item.get("source_endpoint", "/")),
+                                "dst_type": "object",
+                                "dst_key": str(item.get("object_key", "")),
+                                "edge_type": "parameter_object_signal",
+                                "confidence_score": float(item.get("confidence_score", 60) or 60),
+                                "evidence_ref": str((item.get("metadata", {}) or {}).get("evidence_ref", "")),
+                                "metadata": {"object_type": str(item.get("object_type", "")), "source_plugin": self.name},
+                            }
+                            for item in object_rows[:500]
+                            if str(item.get("object_key", "")).strip()
+                        ],
+                        discovery_source=self.name,
+                        confidence_score=75.0,
+                    )
             except Exception:
                 pass
 

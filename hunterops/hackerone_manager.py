@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from hunterops.runtime_paths import resolve_path, secure_secret_file
 from hunterops.types import Task
 
 
@@ -45,7 +46,7 @@ class HackerOneManager:
         self.enabled = bool(self.cfg.get("enabled", False))
         self.strict_scope = bool(self.cfg.get("strict_scope_enforcement", True))
         self.base_url = str(self.cfg.get("base_url", "https://api.hackerone.com/v1")).rstrip("/")
-        self.scope_cache_file = Path(str(self.cfg.get("scope_cache_file", "data/processed/h1_scope_cache.json")))
+        self.scope_cache_file = resolve_path(str(self.cfg.get("scope_cache_file", "data/processed/h1_scope_cache.json")))
         self.poll_interval_seconds = int(self.cfg.get("poll_interval_seconds", 900))
         self.structured_scope_only = bool(self.cfg.get("structured_scope_only", True))
         self.default_target_rps = float(self.cfg.get("default_target_rps", 1.0))
@@ -150,11 +151,14 @@ class HackerOneManager:
             "updated_at": int(time.time()),
             "handles": self.program_handles,
             "hosts": sorted(list(new_hosts)),
+            "added_hosts": added,
+            "removed_hosts": removed,
             "rate_limits": new_rate_limits,
             "programs": programs_summary,
         }
         self.scope_cache_file.parent.mkdir(parents=True, exist_ok=True)
         self.scope_cache_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        secure_secret_file(self.scope_cache_file)
         return {
             "enabled": True,
             "hosts": sorted(list(new_hosts)),
@@ -197,7 +201,7 @@ class HackerOneManager:
         if not self.enabled:
             return []
         doc = _load_json(self.scope_cache_file)
-        added = [str(x).strip() for x in doc.get("hosts", []) if str(x).strip()]
+        added = [str(x).strip() for x in doc.get("added_hosts", []) if str(x).strip()]
         tasks: list[Task] = []
         for target in added:
             tasks.append(

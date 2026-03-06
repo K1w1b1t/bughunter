@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import difflib
 import hashlib
 import json
 import os
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -15,8 +17,15 @@ from hunterops.session_profiles import auth_header, load_sessions
 from hunterops.storage import PostgresStorage
 from hunterops.types import Finding, Task
 
-SENSITIVE_KEYWORDS = ("admin", "internal", "v1/debug", "config", "staging", "export", "graphiql")
+SENSITIVE_ENDPOINT_KEYWORDS = ("admin", "internal", "v1/debug", "config", "staging", "export", "graphiql")
 ID_PARAM_HINTS = ("id", "uid", "user_id", "account_id", "order_id", "invoice_id", "profile_id", "project_id")
+DEFAULT_HEADER_CANDIDATES = ("X-Internal-ID", "X-Admin-Profile", "Version-Override", "X-Environment", "X-Tenant")
+HEADER_VALUE_CANDIDATES = ("1", "true", "admin", "internal", "beta")
+SENSITIVE_FIELDS = ("email", "cpf", "phone", "address", "token", "account", "wallet", "invoice", "user_id", "tenant")
+EMAIL_RE = re.compile(r"""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
+UUID_RE = re.compile(r"""\b[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}\b""")
+NUMERIC_ID_RE = re.compile(r"""\b[1-9][0-9]{2,18}\b""")
+
 IGNORE_DYNAMIC_FIELDS = {
     "timestamp",
     "updated_at",
@@ -65,7 +74,7 @@ def _remove_dynamic_fields(value: Any) -> Any:
             out[key_s] = _remove_dynamic_fields(child)
         return out
     if isinstance(value, list):
-        return [_remove_dynamic_fields(x) for x in value[:100]]
+        return [_remove_dynamic_fields(x) for x in value[:120]]
     return value
 
 
@@ -90,7 +99,7 @@ def _structure_paths(value: Any, prefix: str = "") -> set[str]:
     elif isinstance(value, list):
         path = f"{prefix}[]" if prefix else "[]"
         out.add(path)
-        for item in value[:5]:
+        for item in value[:6]:
             out |= _structure_paths(item, path)
     return out
 
@@ -105,36 +114,137 @@ def _content_ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
-def _extract_endpoints_from_rows(rows: list[dict[str, Any]]) -> set[str]:
-    out: set[str] = set()
+def _extract_endpoints_and_headers(rows: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
+    endpoints: set[str] = set()
+    headers: set[str] = set(DEFAULT_HEADER_CANDIDATES)
     for row in rows:
         category = str(row.get("category", "")).lower()
-        if category not in {"js_discovery", "parameter_intelligence"}:
-            continue
         evidence = row.get("evidence", {}) if isinstance(row.get("evidence"), dict) else {}
-        arr = evidence.get("endpoints", [])
-        if isinstance(arr, list):
-            for item in arr:
-                if isinstance(item, str):
-                    ep = _normalize_endpoint(item)
+        if category in {"js_discovery", "parameter_intelligence", "surface_map"}:
+            arr = evidence.get("endpoints", [])
+            if isinstance(arr, list):
+                for item in arr:
+                    if isinstance(item, str):
+                        ep = _normalize_endpoint(item)
+                        if ep:
+                            endpoints.add(ep)
+            sample = evidence.get("mapped_sample", [])
+            if isinstance(sample, list):
+                for item in sample:
+                    if not isinstance(item, dict):
+                        continue
+                    ep = _normalize_endpoint(str(item.get("endpoint", "")))
                     if ep:
-                        out.add(ep)
-        mapping = evidence.get("parameter_map_sample", [])
-        if isinstance(mapping, list):
-            for m in mapping:
-                if not isinstance(m, dict):
-                    continue
-                ep = _normalize_endpoint(str(m.get("endpoint", "")))
-                if ep:
-                    out.add(ep)
-    return out
+                        endpoints.add(ep)
+            param_rows = evidence.get("parameter_map_sample", [])
+            if isinstance(param_rows, list):
+                for item in param_rows:
+                    if not isinstance(item, dict):
+                        continue
+                    ep = _normalize_endpoint(str(item.get("endpoint", "")))
+                    if ep:
+                        endpoints.add(ep)
+            token_names = evidence.get("token_names", [])
+            if isinstance(token_names, list):
+                for name in token_names:
+                    raw = str(name).strip()
+                    if raw.lower().startswith("x-") or "override" in raw.lower():
+                        headers.add(raw)
+            header_names = evidence.get("header_names", []) or evidence.get("possible_headers", [])
+            if isinstance(header_names, list):
+                for name in header_names:
+                    raw = str(name).strip()
+                    if raw.lower().startswith("x-") or "override" in raw.lower():
+                        headers.add(raw)
+    return endpoints, headers
 
 
 def _sensitive_endpoint_priority(endpoint: str) -> int:
     text = endpoint.lower()
-    if any(k in text for k in SENSITIVE_KEYWORDS):
+    if any(k in text for k in SENSITIVE_ENDPOINT_KEYWORDS):
         return 100
-    return 70
+    return 72
+
+
+def _sensitive_object_hits(text: str, object_values: set[str]) -> list[str]:
+    if not text or not object_values:
+        return []
+    hits: list[str] = []
+    lower = text.lower()
+    for value in list(object_values)[:500]:
+        raw = str(value).strip()
+        if not raw:
+            continue
+        if raw.lower() in lower:
+            hits.append(raw)
+            if len(hits) >= 20:
+                break
+    return sorted(set(hits))
+
+
+def _extract_entities_from_text(text: str, cap: int = 60) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for hit in EMAIL_RE.findall(text):
+        out.append(("email", hit.strip()))
+    for hit in UUID_RE.findall(text):
+        out.append(("object_reference", hit.strip()))
+    for hit in NUMERIC_ID_RE.findall(text):
+        out.append(("numeric_id", hit.strip()))
+    dedupe: set[str] = set()
+    compact: list[tuple[str, str]] = []
+    for etype, value in out:
+        sig = f"{etype}|{value.lower()}"
+        if sig in dedupe:
+            continue
+        dedupe.add(sig)
+        compact.append((etype, value))
+        if len(compact) >= cap:
+            break
+    return compact
+
+
+def _build_spawn_tasks(
+    *,
+    target: str,
+    run_id: str,
+    endpoint: str,
+    param: str,
+    entity_values: list[str],
+    current_depth: int,
+    max_depth: int,
+) -> list[dict[str, Any]]:
+    if current_depth >= max_depth:
+        return []
+    out: list[dict[str, Any]] = []
+    dedupe: set[str] = set()
+    for raw in entity_values[:40]:
+        ep = _inject_query(endpoint, param, raw) if endpoint.startswith("http") else _inject_query(f"https://{target}{endpoint}", param, raw)
+        path = urlparse(ep).path or endpoint
+        path_q = f"{path}?{urlparse(ep).query}" if urlparse(ep).query else path
+        for plugin_name in ("parameter_intelligence", "differential_auth_prover"):
+            sig = f"{plugin_name}|{path_q}|{raw}"
+            if sig in dedupe:
+                continue
+            dedupe.add(sig)
+            out.append(
+                {
+                    "plugin": plugin_name,
+                    "target": target,
+                    "payload": {
+                        "run_id": run_id,
+                        "seed_paths": [path_q],
+                        "trigger": "aggressive_entity_expansion",
+                        "priority": 100,
+                        "priority_score": 100,
+                        "_depth": current_depth + 1,
+                    },
+                }
+            )
+    return out[:120]
+
+
+def _path(value: str) -> Path:
+    return Path(value)
 
 
 class PluginImpl(Plugin):
@@ -148,12 +258,14 @@ class PluginImpl(Plugin):
             return []
 
         timeout = int(context["runtime"].get("timeout_seconds", 25))
+        concurrency = max(2, int(context["runtime"].get("concurrency", 10)))
         max_probes = int(cfg.get("max_probes", 90))
         min_structure = float(cfg.get("min_structure_similarity_pct", 90))
-        min_content = float(cfg.get("min_content_similarity_pct", 85))
         sess_file = str(cfg.get("sessions_file", "data/sessions.yaml"))
-        owner_name = str(cfg.get("session_owner", "user"))
-        other_name = str(cfg.get("session_other", "user_b"))
+        owner_name = str(cfg.get("session_owner", cfg.get("auth_context_a", "user")))
+        other_name = str(cfg.get("session_other", cfg.get("auth_context_b", "user_b")))
+        max_depth = int(context["runtime"].get("recursion_max_depth", 5))
+        current_depth = int(payload.get("_depth", 0) or 0)
         base_url = f"https://{task.target}"
 
         sessions = load_sessions(_path(sess_file))
@@ -175,7 +287,16 @@ class PluginImpl(Plugin):
         except Exception:
             return []
 
-        endpoints: set[str] = set()
+        try:
+            run_rows = storage.fetch_run_findings(run_id=run_id, target=task.target)
+            endpoints, header_candidates = _extract_endpoints_and_headers(run_rows)
+            endpoints |= set(storage.list_known_endpoints(target=task.target, run_id=run_id, limit=600))
+            param_rows = storage.list_endpoint_parameters(run_id=run_id, limit=3000)
+            known_entities = storage.list_recent_entities(target=task.target, limit=800)
+            object_rows = storage.list_objects(run_id=run_id, target=task.target, limit=1000) if hasattr(storage, "list_objects") else []
+        except Exception:
+            return []
+
         seed_paths = payload.get("seed_paths", [])
         if isinstance(seed_paths, list):
             for item in seed_paths:
@@ -183,26 +304,8 @@ class PluginImpl(Plugin):
                     ep = _normalize_endpoint(item)
                     if ep:
                         endpoints.add(ep)
-
-        try:
-            run_rows = storage.fetch_run_findings(run_id=run_id, target=task.target)
-            endpoints |= _extract_endpoints_from_rows(run_rows)
-            endpoints |= set(storage.list_known_endpoints(target=task.target, run_id=run_id, limit=300))
-            param_rows = storage.list_endpoint_parameters(run_id=run_id, limit=2400)
-            entities = storage.list_recent_entities(target=task.target, limit=400)
-        except Exception:
-            return []
-
         if not endpoints:
             return []
-
-        entity_values: list[str] = []
-        for e in entities:
-            ev = str(e.get("entity_value", "")).strip()
-            if ev and ev not in entity_values:
-                entity_values.append(ev)
-        if not entity_values:
-            entity_values = ["1", "2"]
 
         params_by_endpoint: dict[str, list[str]] = {}
         for row in param_rows:
@@ -214,38 +317,68 @@ class PluginImpl(Plugin):
             if pn not in params_by_endpoint[ep]:
                 params_by_endpoint[ep].append(pn)
 
+        entity_values: list[str] = []
+        seen_entities: set[str] = set()
+        substitution = payload.get("entity_substitution", {}) if isinstance(payload.get("entity_substitution"), dict) else {}
+        sub_value = str(substitution.get("entity_value", "")).strip()
+        if sub_value:
+            entity_values.append(sub_value)
+            seen_entities.add(sub_value.lower())
+        for row in object_rows:
+            val = str(row.get("object_key", "")).strip()
+            if val and val.lower() not in seen_entities:
+                entity_values.append(val)
+                seen_entities.add(val.lower())
+        for row in known_entities:
+            val = str(row.get("entity_value", "")).strip()
+            if val and val.lower() not in seen_entities:
+                entity_values.append(val)
+                seen_entities.add(val.lower())
+        if not entity_values:
+            entity_values = ["1", "2", "1001"]
+
+        object_value_set = {str(x).strip().lower() for x in entity_values if str(x).strip()}
         probes: list[tuple[str, str, str]] = []
+        dedupe_probe: set[str] = set()
         for ep in sorted(endpoints):
             params = params_by_endpoint.get(ep, [])
             if not params:
                 params = ["id", "user_id", "account_id"]
-            for p in params:
-                if len(probes) >= max_probes:
-                    break
-                if p.lower() not in ID_PARAM_HINTS and "id" not in p.lower():
+            for param in params:
+                pl = param.lower()
+                if pl not in ID_PARAM_HINTS and "id" not in pl:
                     continue
-                for ev in entity_values[:4]:
-                    probes.append((ep, p, ev))
+                for entity_value in entity_values[:12]:
+                    sig = f"{ep}|{param}|{entity_value}"
+                    if sig in dedupe_probe:
+                        continue
+                    dedupe_probe.add(sig)
+                    probes.append((ep, param, entity_value))
                     if len(probes) >= max_probes:
                         break
+                if len(probes) >= max_probes:
+                    break
             if len(probes) >= max_probes:
                 break
 
+        sem = asyncio.Semaphore(concurrency)
         findings: list[Finding] = []
-        for ep, param, entity_id in probes:
-            probe_url = _inject_query(f"{base_url}{ep}", param, entity_id)
-            r_owner, r_other, r_unauth = await _triple_get(
-                url=probe_url,
-                owner_headers=owner_hdr,
-                other_headers=other_hdr,
-                unauth_headers=unauth_hdr,
-                timeout=timeout,
-            )
+        edge_rows: list[dict[str, Any]] = []
+        object_upserts: list[dict[str, Any]] = []
+
+        async def run_probe(endpoint: str, param: str, entity_value: str) -> Finding | None:
+            probe_url = _inject_query(f"{base_url}{endpoint}", param, entity_value)
+            async with sem:
+                owner_req = request_http_async("GET", probe_url, headers=owner_hdr, timeout=timeout)
+                other_req = request_http_async("GET", probe_url, headers=other_hdr, timeout=timeout)
+                unauth_req = request_http_async("GET", probe_url, headers=unauth_hdr, timeout=timeout)
+                r_owner, r_other, r_unauth = await asyncio.gather(owner_req, other_req, unauth_req)
+
             status_owner = int(r_owner.get("status", 0) or 0)
             status_other = int(r_other.get("status", 0) or 0)
             status_unauth = int(r_unauth.get("status", 0) or 0)
-            if status_owner != 200 or status_other != 200:
-                continue
+            if status_owner not in {200, 201} or status_other not in {200, 201}:
+                return None
 
             owner_json = _remove_dynamic_fields(_load_json(str(r_owner.get("text", ""))))
             other_json = _remove_dynamic_fields(_load_json(str(r_other.get("text", ""))))
@@ -254,120 +387,274 @@ class PluginImpl(Plugin):
             other_norm = json.dumps(other_json, sort_keys=True, ensure_ascii=True)
             unauth_norm = json.dumps(unauth_json, sort_keys=True, ensure_ascii=True)
 
-            struct_owner = _structure_paths(owner_json)
-            struct_other = _structure_paths(other_json)
-            struct_unauth = _structure_paths(unauth_json)
-
-            structure_sim = round(_jaccard(struct_owner, struct_other) * 100.0, 2)
+            owner_struct = _structure_paths(owner_json)
+            other_struct = _structure_paths(other_json)
+            unauth_struct = _structure_paths(unauth_json)
+            structure_sim = round(_jaccard(owner_struct, other_struct) * 100.0, 2)
             content_sim = round(_content_ratio(owner_norm, other_norm) * 100.0, 2)
-            unauth_structure = round(_jaccard(struct_owner, struct_unauth) * 100.0, 2)
+            unauth_structure = round(_jaccard(owner_struct, unauth_struct) * 100.0, 2)
             unauth_content = round(_content_ratio(owner_norm, unauth_norm) * 100.0, 2)
-            if structure_sim < min_structure or content_sim < min_content:
-                continue
+            data_different = owner_norm != other_norm
+            owner_text = str(r_owner.get("text", ""))
+            other_text = str(r_other.get("text", ""))
+            same_object_exposed = entity_value.lower() in other_text.lower() and status_unauth in {0, 401, 403}
+            insecure_success = structure_sim >= min_structure and (data_different or same_object_exposed)
+            if not insecure_success:
+                return None
 
-            likely_unauth_blocked = status_unauth in {0, 401, 403}
-            confidence = 92.0 if likely_unauth_blocked else 87.0
+            sensitive_hits = _sensitive_object_hits(other_text, object_value_set)
+            sensitive_field_delta = [field for field in SENSITIVE_FIELDS if field in owner_json and field in other_json and str(owner_json.get(field)) != str(other_json.get(field))]
+            unauth_blocked = status_unauth in {0, 401, 403}
+
+            delta_factor = max(0.0, min(1.0, (100.0 - content_sim) / 100.0))
+            confidence = 60.0
+            confidence += max(0.0, min(20.0, (structure_sim - 80.0) * 0.8))
+            confidence += 20.0 * delta_factor
+            if unauth_blocked:
+                confidence += 8.0
+            if sensitive_hits:
+                confidence += 8.0
+            if sensitive_field_delta:
+                confidence += 6.0
+            confidence = round(min(98.0, max(65.0, confidence)), 2)
+
             severity = "critical" if confidence >= 90 else "high"
-            title = f"Potential IDOR via differential auth replay at {ep} using {param}"
+            category = "critical_idor_vulnerability" if severity == "critical" else "idor_behavior_indicator"
+            extracted_entities = _extract_entities_from_text(owner_text + "\n" + other_text, cap=40)
+            spawn_values = [entity_value] + [x[1] for x in extracted_entities]
+            spawn_tasks = _build_spawn_tasks(
+                target=task.target,
+                run_id=run_id,
+                endpoint=endpoint,
+                param=param,
+                entity_values=spawn_values,
+                current_depth=current_depth,
+                max_depth=max_depth,
+            )
+            spawn_tasks.insert(
+                0,
+                {
+                    "plugin": "report_synthesis",
+                    "target": task.target,
+                    "payload": {
+                        "run_id": run_id,
+                        "priority": 100,
+                        "_depth": current_depth + 1,
+                        "seed_paths": [endpoint],
+                        "trigger": "differential_auth_prover",
+                    },
+                },
+            )
 
-            findings.append(
-                Finding(
+            edge_rows.extend(
+                [
+                    {
+                        "src_type": "endpoint",
+                        "src_key": endpoint,
+                        "dst_type": "object",
+                        "dst_key": entity_value,
+                        "edge_type": "cross_context_object_access",
+                        "confidence_score": confidence,
+                        "metadata": {"parameter": param, "plugin": self.name},
+                    },
+                    {
+                        "src_type": "auth_context",
+                        "src_key": owner_name,
+                        "dst_type": "endpoint",
+                        "dst_key": endpoint,
+                        "edge_type": "authorized_access",
+                        "confidence_score": 70.0,
+                        "metadata": {"plugin": self.name},
+                    },
+                    {
+                        "src_type": "auth_context",
+                        "src_key": other_name,
+                        "dst_type": "endpoint",
+                        "dst_key": endpoint,
+                        "edge_type": "cross_context_access",
+                        "confidence_score": confidence,
+                        "metadata": {"plugin": self.name, "parameter": param, "entity_id": entity_value},
+                    },
+                ]
+            )
+            object_upserts.append(
+                {
+                    "object_type": "object_reference" if UUID_RE.fullmatch(entity_value) else "numeric_id",
+                    "object_key": entity_value,
+                    "source_endpoint": endpoint,
+                    "confidence_score": confidence,
+                    "discovery_source": self.name,
+                    "metadata": {"parameter": param, "classification": category},
+                }
+            )
+            for etype, evalue in extracted_entities:
+                object_upserts.append(
+                    {
+                        "object_type": etype,
+                        "object_key": evalue,
+                        "source_endpoint": endpoint,
+                        "confidence_score": max(66.0, confidence - 10.0),
+                        "discovery_source": self.name,
+                        "metadata": {"parameter": param, "classification": "response_entity"},
+                    }
+                )
+
+            return Finding(
+                plugin=self.name,
+                target=task.target,
+                category=category,
+                severity=severity,
+                title=f"Potential IDOR via differential auth replay at {endpoint} using {param}",
+                evidence={
+                    "request_auth_a": {"method": "GET", "url": probe_url, "headers": owner_hdr},
+                    "response_auth_a": {
+                        "status": status_owner,
+                        "length": int(r_owner.get("length", 0) or 0),
+                        "headers": r_owner.get("headers", {}),
+                        "body": owner_text,
+                    },
+                    "request_auth_b": {"method": "GET", "url": probe_url, "headers": other_hdr},
+                    "response_auth_b": {
+                        "status": status_other,
+                        "length": int(r_other.get("length", 0) or 0),
+                        "headers": r_other.get("headers", {}),
+                        "body": other_text,
+                    },
+                    "request_unauthenticated": {"method": "GET", "url": probe_url, "headers": unauth_hdr},
+                    "response_unauthenticated": {
+                        "status": status_unauth,
+                        "length": int(r_unauth.get("length", 0) or 0),
+                        "headers": r_unauth.get("headers", {}),
+                        "body": str(r_unauth.get("text", "")),
+                    },
+                    "diff_map": {
+                        "entity_id": entity_value,
+                        "parameter": param,
+                        "status_owner": status_owner,
+                        "status_other": status_other,
+                        "status_unauthenticated": status_unauth,
+                        "structure_similarity_pct": structure_sim,
+                        "content_similarity_pct": content_sim,
+                        "unauth_structure_similarity_pct": unauth_structure,
+                        "unauth_content_similarity_pct": unauth_content,
+                        "sensitive_object_hits": sensitive_hits,
+                        "sensitive_field_delta": sensitive_field_delta,
+                        "owner_hash": hashlib.sha256(owner_norm.encode("utf-8")).hexdigest(),
+                        "other_hash": hashlib.sha256(other_norm.encode("utf-8")).hexdigest(),
+                        "unauth_hash": hashlib.sha256(unauth_norm.encode("utf-8")).hexdigest(),
+                        "ignore_dynamic_fields": sorted(list(IGNORE_DYNAMIC_FIELDS)),
+                    },
+                    "tested_parameter": param,
+                    "entity_id": entity_value,
+                    "endpoint": endpoint,
+                    "discovery_source": self.name,
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+                metadata={
+                    "novelty": float(payload.get("priority", _sensitive_endpoint_priority(endpoint))),
+                    "confidence": confidence,
+                    "confidence_score": confidence,
+                    "impact": 94 if severity == "critical" else 84,
+                    "priority_score": _sensitive_endpoint_priority(endpoint),
+                    "discovery_source": self.name,
+                    "spawn_tasks": spawn_tasks,
+                },
+            )
+
+        probe_results = await asyncio.gather(*(run_probe(ep, param, val) for ep, param, val in probes), return_exceptions=False)
+        for finding in probe_results:
+            if isinstance(finding, Finding):
+                findings.append(finding)
+
+        # Behavioral header-variation exploration for sensitive/internal routes.
+        sensitive_routes = sorted([ep for ep in endpoints if any(k in ep.lower() for k in SENSITIVE_ENDPOINT_KEYWORDS)])[:40]
+        header_findings: list[Finding] = []
+        if sensitive_routes and header_candidates:
+            async def test_header_route(endpoint: str, header_name: str, value: str) -> Finding | None:
+                url = f"{base_url}{endpoint}"
+                async with sem:
+                    baseline = await request_http_async("GET", url, headers=other_hdr, timeout=timeout)
+                    mutated_headers = other_hdr.copy()
+                    mutated_headers[header_name] = value
+                    variant = await request_http_async("GET", url, headers=mutated_headers, timeout=timeout)
+                base_status = int(baseline.get("status", 0) or 0)
+                var_status = int(variant.get("status", 0) or 0)
+                base_len = int(baseline.get("length", 0) or 0)
+                var_len = int(variant.get("length", 0) or 0)
+                jump = base_status in {0, 401, 403, 404} and var_status in {200, 201}
+                structural_jump = var_status in {200, 201} and (var_len > max(60, int(base_len * 1.35)))
+                if not jump and not structural_jump:
+                    return None
+                confidence = 83.0 if jump else 76.0
+                edge_rows.append(
+                    {
+                        "src_type": "header",
+                        "src_key": header_name,
+                        "dst_type": "endpoint",
+                        "dst_key": endpoint,
+                        "edge_type": "environmental_jump_header",
+                        "confidence_score": confidence,
+                        "metadata": {"header_value": value, "plugin": self.name},
+                    }
+                )
+                return Finding(
                     plugin=self.name,
                     target=task.target,
-                    category="critical_idor_vulnerability" if severity == "critical" else "idor_behavior_indicator",
-                    severity=severity,
-                    title=title,
+                    category="environmental_jump_indicator",
+                    severity="high" if jump else "medium",
+                    title=f"Header variation may expose internal route {endpoint} via {header_name}",
                     evidence={
-                        "request_auth_a": {"method": "GET", "url": probe_url, "headers": owner_hdr},
-                        "response_auth_a": {
-                            "status": status_owner,
-                            "length": int(r_owner.get("length", 0) or 0),
-                            "headers": r_owner.get("headers", {}),
-                            "body": str(r_owner.get("text", "")),
-                        },
-                        "request_auth_b": {"method": "GET", "url": probe_url, "headers": other_hdr},
-                        "response_auth_b": {
-                            "status": status_other,
-                            "length": int(r_other.get("length", 0) or 0),
-                            "headers": r_other.get("headers", {}),
-                            "body": str(r_other.get("text", "")),
-                        },
-                        "request_unauthenticated": {"method": "GET", "url": probe_url, "headers": unauth_hdr},
-                        "response_unauthenticated": {
-                            "status": status_unauth,
-                            "length": int(r_unauth.get("length", 0) or 0),
-                            "headers": r_unauth.get("headers", {}),
-                            "body": str(r_unauth.get("text", "")),
-                        },
-                        "diff_map": {
-                            "entity_id": entity_id,
-                            "parameter": param,
-                            "status_owner": status_owner,
-                            "status_other": status_other,
-                            "status_unauthenticated": status_unauth,
-                            "structure_similarity_pct": structure_sim,
-                            "content_similarity_pct": content_sim,
-                            "unauth_structure_similarity_pct": unauth_structure,
-                            "unauth_content_similarity_pct": unauth_content,
-                            "owner_hash": hashlib.sha256(owner_norm.encode("utf-8")).hexdigest(),
-                            "other_hash": hashlib.sha256(other_norm.encode("utf-8")).hexdigest(),
-                            "unauth_hash": hashlib.sha256(unauth_norm.encode("utf-8")).hexdigest(),
-                            "ignore_dynamic_fields": sorted(list(IGNORE_DYNAMIC_FIELDS)),
-                        },
-                        "tested_parameter": param,
-                        "entity_id": entity_id,
-                        "endpoint": ep,
+                        "endpoint": endpoint,
+                        "header_name": header_name,
+                        "header_value": value,
+                        "baseline_request": {"method": "GET", "url": url, "headers": other_hdr},
+                        "baseline_response": {"status": base_status, "length": base_len},
+                        "variant_request": {"method": "GET", "url": url, "headers": mutated_headers},
+                        "variant_response": {"status": var_status, "length": var_len, "headers": variant.get("headers", {})},
                         "discovery_source": self.name,
-                        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                     },
                     metadata={
-                        "novelty": float(payload.get("priority", _sensitive_endpoint_priority(ep))),
+                        "novelty": 90,
                         "confidence": confidence,
                         "confidence_score": confidence,
-                        "impact": 92 if severity == "critical" else 84,
-                        "priority_score": _sensitive_endpoint_priority(ep),
+                        "impact": 82 if jump else 70,
+                        "priority_score": 100,
                         "discovery_source": self.name,
-                        "spawn_tasks": [
-                            {
-                                "plugin": "report_synthesis",
-                                "target": task.target,
-                                "payload": {
-                                    "run_id": run_id,
-                                    "priority": 100,
-                                    "_depth": int(payload.get("_depth", 0) or 0) + 1,
-                                    "seed_paths": [ep],
-                                    "trigger": "differential_auth_prover",
-                                },
-                            }
-                        ],
                     },
                 )
-            )
+
+            header_jobs = []
+            headers_sorted = sorted([h for h in header_candidates if h.lower().startswith("x-") or "override" in h.lower()])[:16]
+            for ep in sensitive_routes:
+                for header_name in headers_sorted:
+                    for value in HEADER_VALUE_CANDIDATES[:4]:
+                        header_jobs.append(test_header_route(ep, header_name, value))
+                        if len(header_jobs) >= 220:
+                            break
+                    if len(header_jobs) >= 220:
+                        break
+                if len(header_jobs) >= 220:
+                    break
+            if header_jobs:
+                raw_header_findings = await asyncio.gather(*header_jobs, return_exceptions=False)
+                for item in raw_header_findings:
+                    if isinstance(item, Finding):
+                        header_findings.append(item)
+        findings.extend(header_findings)
+
+        # Persist attack graph relationships + discovered objects for cross-pollination.
+        if findings:
+            try:
+                if object_upserts:
+                    storage.upsert_objects(run_id=run_id, target=task.target, rows=object_upserts)
+                if edge_rows:
+                    storage.upsert_attack_graph_edges(
+                        run_id=run_id,
+                        target=task.target,
+                        edges=edge_rows,
+                        discovery_source=self.name,
+                        confidence_score=78.0,
+                    )
+            except Exception:
+                pass
         return findings
-
-
-def _path(value: str) -> Any:
-    from pathlib import Path
-
-    return Path(value)
-
-
-async def _triple_get(
-    url: str,
-    owner_headers: dict[str, str],
-    other_headers: dict[str, str],
-    unauth_headers: dict[str, str],
-    timeout: int,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    return await _gather_3(
-        request_http_async("GET", url, headers=owner_headers, timeout=timeout),
-        request_http_async("GET", url, headers=other_headers, timeout=timeout),
-        request_http_async("GET", url, headers=unauth_headers, timeout=timeout),
-    )
-
-
-async def _gather_3(a: Any, b: Any, c: Any) -> tuple[Any, Any, Any]:
-    import asyncio
-
-    x, y, z = await asyncio.gather(a, b, c, return_exceptions=False)
-    return x, y, z

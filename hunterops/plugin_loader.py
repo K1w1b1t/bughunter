@@ -9,18 +9,20 @@ from hunterops.plugin_base import Plugin
 def load_plugins(plugin_names: list[str]) -> dict[str, Plugin]:
     loaded: dict[str, Plugin] = {}
     for name in plugin_names:
-        module_name = f"hunterops.plugins.{name}"
+        normalized = str(name).strip().lower()
+        if not normalized:
+            continue
+        module_name = f"hunterops.plugins.{normalized}"
         mod = importlib.import_module(module_name)
         if not hasattr(mod, "PluginImpl"):
             raise RuntimeError(f"Plugin module missing PluginImpl: {module_name}")
         plugin = mod.PluginImpl()
         if not isinstance(plugin, Plugin):
             raise RuntimeError(f"Invalid plugin type in {module_name}")
-        loaded[plugin.name] = plugin
+        loaded[str(plugin.name).strip().lower()] = plugin
     return loaded
 
 
 def enabled_plugins(config: dict[str, Any]) -> list[str]:
     plugins = config.get("plugins", [])
-    return [p["module"] for p in plugins if p.get("enabled", True)]
-
+    return [str(p["module"]).strip().lower() for p in plugins if p.get("enabled", True)]

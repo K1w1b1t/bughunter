@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any
 
+from hunterops.async_runtime import install_uvloop_if_available
 from hunterops.plugin_base import Plugin
 from hunterops.rate_limit import AsyncRateLimiter
 from hunterops.retry import retry_async
@@ -21,6 +23,7 @@ class TaskExecutor:
         context: dict[str, Any],
         logger: logging.Logger,
     ) -> None:
+        install_uvloop_if_available(logger=logger)
         self.plugins = plugins
         self.context = context
         self.logger = logger
@@ -28,7 +31,9 @@ class TaskExecutor:
         self.queue: asyncio.PriorityQueue[tuple[int, int, Task]] = asyncio.PriorityQueue(maxsize=runtime["task_queue_size"])
         self.results: list[Finding] = []
         self.rate_limiter = AsyncRateLimiter(runtime["rate_limit_per_sec"])
-        self.concurrency = runtime["concurrency"]
+        cpu_workers = max(2, (os.cpu_count() or 1) * 2)
+        configured_workers = int(runtime.get("concurrency", 0) or 0)
+        self.concurrency = max(1, configured_workers, cpu_workers)
         self.max_retries = runtime["max_retries"]
         self.backoff = runtime["backoff_base_seconds"]
         self.enable_recursive_tasks = bool(runtime.get("enable_recursive_tasks", True))
@@ -85,9 +90,14 @@ class TaskExecutor:
                 plugin = self.plugins[task.plugin]
 
                 async def invoke() -> list[Finding]:
-                    return await plugin.run(task, self.context)
+                    try:
+                        return await plugin.run(task, self.context)
+                    except Exception as err:
+                        self.logger.exception(f"plugin_run_failed plugin={task.plugin} target={task.target} err={err}")
+                        return []
 
                 findings = await retry_async(invoke, retries=self.max_retries, base_delay=self.backoff)
+                findings = plugin.normalize_findings(findings, task)
                 if findings:
                     self.results.extend(findings)
                     await self._spawn_from_findings(task, findings)
@@ -97,7 +107,7 @@ class TaskExecutor:
                 m["latency_sum"] += elapsed
                 m["findings"] += float(len(findings or []))
             except Exception as err:
-                self.logger.error(f"worker={idx} plugin={task.plugin} target={task.target} err={err}")
+                self.logger.exception(f"worker_failed worker={idx} plugin={task.plugin} target={task.target} err={err}")
                 m = self.metrics.setdefault(task.plugin, {"runs": 0.0, "errors": 0.0, "latency_sum": 0.0, "findings": 0.0})
                 m["runs"] += 1
                 m["errors"] += 1

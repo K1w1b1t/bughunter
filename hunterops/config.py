@@ -5,14 +5,16 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from hunterops.runtime_paths import resolve_path
 
 
-def load_config(path: Path) -> dict[str, Any]:
-    if not path.exists():
+def load_config(path: Path | str) -> dict[str, Any]:
+    resolved = resolve_path(path)
+    if not resolved.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
-    suffix = path.suffix.lower()
-    raw = path.read_text(encoding="utf-8")
+    suffix = resolved.suffix.lower()
+    raw = resolved.read_text(encoding="utf-8")
     if suffix in {".yaml", ".yml"}:
         return yaml.safe_load(raw) or {}
     if suffix == ".json":

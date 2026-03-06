@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from hunterops.async_io import read_json, write_json
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
 
-def _load(path: Path) -> list[dict[str, Any]]:
+async def _load(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = await read_json(path)
     except Exception:
         return []
     rows = doc.get("findings", []) if isinstance(doc, dict) else doc
@@ -44,7 +44,11 @@ class PluginImpl(Plugin):
     async def run(self, task: Task, context: dict) -> list[Finding]:
         cfg = context["config"].get("modules", {}).get(self.name, {})
         source = Path(cfg.get("parameter_source", "data/reports/engine/findings.json"))
-        rows = [r for r in _load(source) if str(r.get("target", "")) == task.target and str(r.get("category", "")) == "parameter_intelligence"]
+        rows = [
+            r
+            for r in await _load(source)
+            if str(r.get("target", "")) == task.target and str(r.get("category", "")) == "parameter_intelligence"
+        ]
         if not rows:
             return []
 
@@ -66,7 +70,7 @@ class PluginImpl(Plugin):
             return []
         out = Path(cfg.get("out_file", "data/processed/smart_payloads.json"))
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps({"target": task.target, "count": len(generated), "payloads": generated}, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        await write_json(out, {"target": task.target, "count": len(generated), "payloads": generated})
         return [
             Finding(
                 plugin=self.name,

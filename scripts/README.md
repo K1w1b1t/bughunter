@@ -25,6 +25,9 @@
 - `cve_feed_update.py`: Builds local CVE catalog (NVD/KEV/EPSS) for relevance matching.
 - `cve_prioritized_queue.py`: Creates top-N CVE validation queue from engine findings.
 - `research_pipeline.py`: Autonomous research loop with reaction logic (`js_discovery` => `parameter_intelligence`).
+- `preflight_real_setup.py`: Blocks execution when scope/env/binaries are incomplete for real operation.
+- `setup_env.sh`: Linux/macOS installer for core Go-based binaries.
+- `setup_linux.sh`: Linux full bootstrap (Docker/Compose + Postgres + HunterOps + permissions hardening).
 - `common.py`: Shared JSON helpers and signature logic.
 
 ## Execution Order

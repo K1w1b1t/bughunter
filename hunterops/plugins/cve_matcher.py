@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any
 
+from hunterops.async_io import read_json
 from hunterops.http_client import request_http_async
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
@@ -13,11 +13,11 @@ TOKEN_SPLIT = re.compile(r"[^a-z0-9._-]+")
 VERSION_RE = re.compile(r"\b\d{1,4}(?:\.\d+){1,3}\b")
 
 
-def load_catalog(path: Path) -> list[dict[str, Any]]:
+async def load_catalog(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = await read_json(path)
     except Exception:
         return []
     rows = payload.get("cves", []) if isinstance(payload, dict) else payload
@@ -65,7 +65,7 @@ class PluginImpl(Plugin):
     async def run(self, task: Task, context: dict[str, Any]) -> list[Finding]:
         cfg = context["config"].get("modules", {}).get(self.name, {})
         timeout = context["runtime"]["timeout_seconds"]
-        catalog = load_catalog(Path(cfg.get("catalog_file", "data/processed/cve_catalog.json")))
+        catalog = await load_catalog(Path(cfg.get("catalog_file", "data/processed/cve_catalog.json")))
         if not catalog:
             return []
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from hunterops.http_client import request_http
+import asyncio
+
+from hunterops.http_client import request_http_async
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
@@ -14,7 +16,12 @@ class PluginImpl(Plugin):
         findings: list[Finding] = []
 
         introspection_q = {"query": "{ __schema { types { name } } }"}
-        r1 = request_http("POST", url, body=introspection_q, timeout=timeout)
+        deep_q = {"query": "query Q{__typename}"}
+        r1, r2 = await asyncio.gather(
+            request_http_async("POST", url, body=introspection_q, timeout=timeout),
+            request_http_async("POST", url, body=deep_q, timeout=timeout),
+            return_exceptions=False,
+        )
         if r1["status"] in {200, 201} and "__schema" in r1["text"]:
             findings.append(
                 Finding(
@@ -28,8 +35,6 @@ class PluginImpl(Plugin):
                 )
             )
 
-        deep_q = {"query": "query Q{__typename}"}
-        r2 = request_http("POST", url, body=deep_q, timeout=timeout)
         if r2["status"] == 200 and "errors" not in r2["text"].lower():
             findings.append(
                 Finding(
@@ -43,4 +48,3 @@ class PluginImpl(Plugin):
                 )
             )
         return findings
-

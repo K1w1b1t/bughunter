@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
-from hunterops.http_client import request_http
+from hunterops.http_client import request_http_async
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
@@ -26,9 +27,13 @@ class PluginImpl(Plugin):
         ]
         found: set[str] = set()
         evidence = []
-        for p in sources:
-            url = f"https://{task.target}{p}"
-            r = request_http("GET", url, timeout=timeout)
+        urls = [f"https://{task.target}{p}" for p in sources]
+        responses = await asyncio.gather(
+            *(request_http_async("GET", url, timeout=timeout) for url in urls),
+            return_exceptions=False,
+        )
+        for idx, url in enumerate(urls):
+            r = responses[idx]
             if r["status"] in {200, 201} and r["length"] > 0:
                 paths = API_PATH_RE.findall(r["text"])
                 for x in paths:
@@ -48,4 +53,3 @@ class PluginImpl(Plugin):
                 metadata={"novelty": 82, "confidence": 72, "impact": 65},
             )
         ]
-

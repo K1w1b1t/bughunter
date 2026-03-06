@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import time
 import uuid
 from datetime import UTC, datetime
@@ -12,10 +13,12 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from hunterops.http_client import request_http_async
+from hunterops.runtime_paths import resolve_path, secure_secret_file
 from hunterops.types import Finding
 
 HEADER_INJECTION_KEYS = ("User-Agent", "Referer", "X-Forwarded-For", "X-Api-Version", "From")
 PARAM_HINTS = ("url", "link", "src", "redirect", "callback", "next", "return", "dest")
+LINUX_BIN_DIR = Path("/usr/local/bin")
 
 
 def _safe_host(value: str) -> str:
@@ -46,8 +49,9 @@ class OOBEngine:
         self.provider = str(self.cfg.get("provider", "custom")).strip().lower()
         self.poll_interval_seconds = int(self.cfg.get("poll_interval_seconds", 30))
         self.max_injections_per_target = int(self.cfg.get("max_injections_per_target", 80))
-        self.state_file = Path(str(self.cfg.get("state_file", "data/processed/oob_state.json")))
-        self.events_file = Path(str(self.cfg.get("events_file", "data/processed/oob_events.jsonl")))
+        self.max_concurrent_per_target = int(self.cfg.get("max_concurrent_per_target", 3))
+        self.state_file = resolve_path(str(self.cfg.get("state_file", "data/processed/oob_state.json")))
+        self.events_file = resolve_path(str(self.cfg.get("events_file", "data/processed/oob_events.jsonl")))
         self.timeout = int(runtime.get("timeout_seconds", 25))
 
         domain_env = str(self.cfg.get("callback_domain_env", "HUNTEROPS_OOB_CALLBACK_DOMAIN"))
@@ -56,11 +60,32 @@ class OOBEngine:
         self.callback_domain = os.getenv(domain_env, str(self.cfg.get("callback_domain", ""))).strip()
         self.poll_url = os.getenv(poll_env, str(self.cfg.get("poll_url", ""))).strip()
         self.api_token = os.getenv(token_env, str(self.cfg.get("api_token", ""))).strip()
+        self.interactsh_client_bin = self._resolve_binary(str(self.cfg.get("interactsh_binary", "interactsh-client")))
+        if self.enabled and not self.interactsh_client_bin and self.logger is not None:
+            try:
+                self.logger.warning("oob_engine_missing_binary tool=interactsh-client expected=/usr/local/bin/interactsh-client")
+            except Exception:
+                pass
 
         self._state = _load_json(self.state_file)
         self._registry = self._state.get("registry", {}) if isinstance(self._state.get("registry"), dict) else {}
         self._seen_events = set(self._state.get("seen_event_ids", [])) if isinstance(self._state.get("seen_event_ids"), list) else set()
         self._lock = asyncio.Lock()
+        self._registry_lock = asyncio.Lock()
+
+    @staticmethod
+    def _resolve_binary(tool: str) -> str:
+        name = str(tool or "").strip()
+        if not name:
+            return ""
+        if "/" in name:
+            candidate = Path(name)
+            return str(candidate) if candidate.exists() else ""
+        preferred = LINUX_BIN_DIR / name
+        if preferred.exists() and os.access(preferred, os.X_OK):
+            return str(preferred)
+        found = shutil.which(name)
+        return str(found) if found else ""
 
     @property
     def available(self) -> bool:
@@ -76,6 +101,7 @@ class OOBEngine:
             "seen_event_ids": sorted(list(self._seen_events))[-5000:],
         }
         self.state_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        secure_secret_file(self.state_file)
 
     def new_correlation_id(self, run_id: str, target: str) -> str:
         token = f"{run_id[:10]}-{_safe_host(target).replace('.', '-')}-{uuid.uuid4().hex[:10]}"
@@ -87,7 +113,30 @@ class OOBEngine:
 
     def _register(self, correlation_id: str, metadata: dict[str, Any]) -> None:
         self._registry[correlation_id] = metadata
-        self._persist()
+
+    async def _send_probe(
+        self,
+        *,
+        target: str,
+        url: str,
+        headers: dict[str, str],
+        correlation_id: str,
+        metadata: dict[str, Any],
+        rate_limiter: Any | None = None,
+        target_waiter: Any | None = None,
+        semaphore: asyncio.Semaphore | None = None,
+    ) -> bool:
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(max(1, self.max_concurrent_per_target))
+        async with semaphore:
+            if rate_limiter is not None and hasattr(rate_limiter, "wait"):
+                await rate_limiter.wait()
+            if callable(target_waiter):
+                await target_waiter(target)
+            resp = await request_http_async("GET", url, headers=headers, timeout=self.timeout)
+            async with self._registry_lock:
+                self._register(correlation_id, metadata)
+            return int(resp.get("status", 0)) >= 0
 
     @staticmethod
     def _param_candidates(parameter_map: list[dict[str, Any]]) -> list[tuple[str, str]]:
@@ -103,7 +152,14 @@ class OOBEngine:
                 out.append((endpoint, param))
         return out
 
-    async def inject_from_findings(self, target: str, run_id: str, findings: list[Finding]) -> int:
+    async def inject_from_findings(
+        self,
+        target: str,
+        run_id: str,
+        findings: list[Finding],
+        rate_limiter: Any | None = None,
+        target_waiter: Any | None = None,
+    ) -> int:
         if not self.available:
             return 0
         endpoint_set: set[str] = set()
@@ -124,6 +180,7 @@ class OOBEngine:
                     param_map.extend([x for x in sample if isinstance(x, dict)])
         param_targets = self._param_candidates(param_map)
         endpoints = sorted(list(endpoint_set))[: self.max_injections_per_target]
+        probes: list[dict[str, Any]] = []
         injected = 0
         for ep in endpoints:
             if injected >= self.max_injections_per_target:
@@ -138,18 +195,21 @@ class OOBEngine:
                 "From": cb,
             }
             url = f"https://{target}{ep}"
-            await request_http_async("GET", url, headers=headers, timeout=self.timeout)
-            self._register(
-                cid,
+            probes.append(
                 {
-                    "run_id": run_id,
-                    "target": target,
-                    "endpoint": ep,
-                    "method": "GET",
+                    "url": url,
                     "headers": headers,
-                    "injection_source": "header",
-                    "timestamp": int(time.time()),
-                },
+                    "correlation_id": cid,
+                    "metadata": {
+                        "run_id": run_id,
+                        "target": target,
+                        "endpoint": ep,
+                        "method": "GET",
+                        "headers": headers,
+                        "injection_source": "header",
+                        "timestamp": int(time.time()),
+                    },
+                }
             )
             injected += 1
         for ep, prm in param_targets:
@@ -164,22 +224,49 @@ class OOBEngine:
             q = [x for x in q if x[0] != prm]
             q.append((prm, cb))
             url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(q), parsed.fragment))
-            await request_http_async("GET", url, headers={"User-Agent": f"HunterOps-OOB/{cid}"}, timeout=self.timeout)
-            self._register(
-                cid,
+            probes.append(
                 {
-                    "run_id": run_id,
-                    "target": target,
-                    "endpoint": endpoint,
-                    "method": "GET",
-                    "parameter": prm,
-                    "injected_url": url,
-                    "injection_source": "parameter",
-                    "timestamp": int(time.time()),
-                },
+                    "url": url,
+                    "headers": {"User-Agent": f"HunterOps-OOB/{cid}"},
+                    "correlation_id": cid,
+                    "metadata": {
+                        "run_id": run_id,
+                        "target": target,
+                        "endpoint": endpoint,
+                        "method": "GET",
+                        "parameter": prm,
+                        "injected_url": url,
+                        "injection_source": "parameter",
+                        "timestamp": int(time.time()),
+                    },
+                }
             )
             injected += 1
-        return injected
+        if not probes:
+            return 0
+        semaphore = asyncio.Semaphore(max(1, self.max_concurrent_per_target))
+        tasks = [
+            self._send_probe(
+                target=target,
+                url=str(probe["url"]),
+                headers=probe["headers"] if isinstance(probe.get("headers"), dict) else {},
+                correlation_id=str(probe["correlation_id"]),
+                metadata=probe["metadata"] if isinstance(probe.get("metadata"), dict) else {},
+                rate_limiter=rate_limiter,
+                target_waiter=target_waiter,
+                semaphore=semaphore,
+            )
+            for probe in probes
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, Exception) and self.logger is not None:
+                try:
+                    self.logger.warning(f"oob_probe_failed target={target} err={res}")
+                except Exception:
+                    pass
+        self._persist()
+        return sum(1 for res in results if res is True)
 
     def _fetch_events(self) -> list[dict[str, Any]]:
         if not self.available:
@@ -284,5 +371,6 @@ class OOBEngine:
                 self.events_file.parent.mkdir(parents=True, exist_ok=True)
                 with self.events_file.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(oob_evidence, ensure_ascii=True) + "\n")
+                secure_secret_file(self.events_file)
             self._persist()
             return findings

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 import os
 import re
 from datetime import UTC, datetime
-from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from hunterops.http_client import request_http_async
@@ -65,6 +65,33 @@ def _graph_nodes_from_endpoints(endpoints: set[str]) -> list[dict[str, object]]:
     return [{"node_type": "endpoint", "node_key": ep, "metadata": {"source": "deep_js_intelligence"}} for ep in sorted(endpoints) if ep]
 
 
+def _object_rows_from_entities(entities: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    type_map = {
+        "uuid": "object_reference",
+        "numeric_id": "numeric_id",
+        "email": "email",
+        "token": "token",
+        "identifier": "object_reference",
+    }
+    for item in entities:
+        etype = str(item.get("entity_type", "")).strip().lower()
+        evalue = str(item.get("entity_value", "")).strip()
+        if not etype or not evalue:
+            continue
+        rows.append(
+            {
+                "object_type": type_map.get(etype, etype),
+                "object_key": evalue,
+                "source_endpoint": str(item.get("source_endpoint", "/")),
+                "confidence_score": float(item.get("confidence_score", 60) or 60),
+                "discovery_source": "deep_js_intelligence",
+                "metadata": item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {},
+            }
+        )
+    return rows
+
+
 class PluginImpl(Plugin):
     name = "deep_js_intelligence"
 
@@ -74,23 +101,33 @@ class PluginImpl(Plugin):
         max_scripts = int(cfg.get("max_scripts", 30))
         seed_paths = cfg.get("seed_paths", ["/", "/app.js", "/main.js", "/static/js/app.js"])
         entropy_threshold = float(cfg.get("entropy_threshold", 3.7))
-        run_id = str(task.payload.get("run_id", "") if isinstance(task.payload, dict) else "")
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        run_id = str(payload.get("run_id", ""))
+        request_delay = max(0.0, float(payload.get("request_delay_seconds", 0) or 0.0))
+        user_agent = str(payload.get("user_agent", "")).strip()
+        request_headers = {"User-Agent": user_agent} if user_agent else {}
 
         base = f"https://{task.target}"
         script_urls: set[str] = set()
         req_resp_sample: list[dict[str, object]] = []
         js_artifacts: list[dict[str, str]] = []
 
+        async def _fetch(url: str) -> dict[str, object]:
+            response = await request_http_async("GET", url, headers=request_headers, timeout=timeout)
+            if request_delay > 0:
+                await asyncio.sleep(request_delay)
+            return response
+
         for p in seed_paths:
             url = p if str(p).startswith("http") else f"{base}{p}"
             try:
-                r = await request_http_async("GET", url, headers={}, timeout=timeout)
+                r = await _fetch(url)
             except Exception:
                 continue
             txt = str(r.get("text", ""))
             req_resp_sample.append(
                 {
-                    "request": {"method": "GET", "url": url, "headers": {}},
+                    "request": {"method": "GET", "url": url, "headers": request_headers},
                     "response": {"status": r.get("status", 0), "length": r.get("length", 0)},
                     "headers": r.get("headers", {}),
                     "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -114,14 +151,14 @@ class PluginImpl(Plugin):
         entity_dedupe: set[str] = set()
         for surl in sorted(script_urls)[:max_scripts]:
             try:
-                r = await request_http_async("GET", surl, headers={}, timeout=timeout)
+                r = await _fetch(surl)
             except Exception:
                 continue
             js = str(r.get("text", ""))
             js_artifacts.append({"url": surl, "sha256": hashlib.sha256(js.encode("utf-8", errors="ignore")).hexdigest()})
             req_resp_sample.append(
                 {
-                    "request": {"method": "GET", "url": surl, "headers": {}},
+                    "request": {"method": "GET", "url": surl, "headers": request_headers},
                     "response": {"status": r.get("status", 0), "length": r.get("length", 0)},
                     "headers": r.get("headers", {}),
                     "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -249,6 +286,40 @@ class PluginImpl(Plugin):
                     for item in discovered_entities:
                         item["source_plugin"] = self.name
                     storage.upsert_discovered_entities(run_id=run_id, target=task.target, rows=discovered_entities)
+                    storage.upsert_objects(
+                        run_id=run_id,
+                        target=task.target,
+                        rows=_object_rows_from_entities(discovered_entities),
+                    )
+                edge_rows: list[dict[str, object]] = []
+                object_rows = _object_rows_from_entities(discovered_entities)
+                if object_rows:
+                    for obj in object_rows[:300]:
+                        src_endpoint = str(obj.get("source_endpoint", "/")) or "/"
+                        if not src_endpoint.startswith("/"):
+                            src_endpoint = urlparse(src_endpoint).path or "/"
+                        edge_rows.append(
+                            {
+                                "src_type": "endpoint",
+                                "src_key": src_endpoint,
+                                "dst_type": "object",
+                                "dst_key": str(obj.get("object_key", "")),
+                                "edge_type": "js_entity_discovery",
+                                "confidence_score": float(obj.get("confidence_score", 60) or 60),
+                                "metadata": {
+                                    "object_type": str(obj.get("object_type", "")),
+                                    "source_plugin": self.name,
+                                },
+                            }
+                        )
+                if edge_rows:
+                    storage.upsert_attack_graph_edges(
+                        run_id=run_id,
+                        target=task.target,
+                        edges=edge_rows,
+                        discovery_source=self.name,
+                        confidence_score=72.0,
+                    )
             except Exception:
                 # Keep non-blocking behavior for research plugin execution.
                 pass

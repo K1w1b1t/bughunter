@@ -1,0 +1,26 @@
+[Unit]
+Description=HunterOps Autonomous Research Stack
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=hunterops_user
+Group=hunterops_user
+WorkingDirectory=/opt/hunterops
+EnvironmentFile=/opt/hunterops/.env
+Environment=COMPOSE_PROJECT_NAME=hunterops
+ExecStartPre=/usr/bin/docker compose -f /opt/hunterops/docker-compose.yml pull --quiet
+ExecStart=/usr/bin/docker compose -f /opt/hunterops/docker-compose.yml up --remove-orphans
+ExecReload=/usr/bin/docker compose -f /opt/hunterops/docker-compose.yml up --remove-orphans
+ExecStop=/usr/bin/docker compose -f /opt/hunterops/docker-compose.yml down
+Restart=always
+RestartSec=10
+TimeoutStartSec=0
+LimitNOFILE=100000
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

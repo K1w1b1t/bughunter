@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from hunterops.findings import calculate_impact
 from hunterops.types import Finding
 
 
@@ -47,11 +48,13 @@ def dedupe_findings(findings: list[Finding]) -> list[Finding]:
 
 
 def risk_score(f: Finding, feedback: dict[str, Any] | None = None) -> float:
+    impact_profile = calculate_impact(f)
     sev_map = {"critical": 95, "high": 80, "medium": 55, "low": 30, "info": 10}
-    severity = sev_map.get(f.severity.lower(), 20)
+    effective_severity = str(impact_profile.get("adjusted_severity", f.severity)).lower()
+    severity = sev_map.get(effective_severity, sev_map.get(f.severity.lower(), 20))
     novelty = float(f.metadata.get("novelty", 0))
     confidence = float(f.metadata.get("confidence", 50))
-    impact = float(f.metadata.get("impact", 50))
+    impact = float(impact_profile.get("impact_score", f.metadata.get("impact", 50)))
     category = f.category.lower()
     auth_bonus = 10 if "auth" in category or "idor" in category or "role" in category else 0
     data_bonus = 8 if "sensitive" in category or "exposure" in category else 0
@@ -104,14 +107,17 @@ def http_diff_score(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
 def serialize_findings(findings: list[Finding], feedback: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for f in findings:
+        impact_profile = calculate_impact(f)
+        metadata = f.metadata.copy() if isinstance(f.metadata, dict) else {}
+        metadata["impact_profile"] = impact_profile
         row = {
             "plugin": f.plugin,
             "target": f.target,
             "category": f.category,
-            "severity": f.severity,
+            "severity": str(impact_profile.get("adjusted_severity", f.severity)),
             "title": f.title,
             "evidence": f.evidence,
-            "metadata": f.metadata,
+            "metadata": metadata,
             "risk_score": risk_score(f, feedback=feedback),
         }
         rows.append(row)

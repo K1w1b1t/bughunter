@@ -11,12 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from hunterops.config import get_runtime, load_config
+from hunterops.async_runtime import install_uvloop_if_available
+from hunterops.env_utils import evaluate_runtime_dependencies, filter_enabled_plugins
 from hunterops.executor import TaskExecutor
+from hunterops.http_client import close_async_http_client, configure_http_pool
 from hunterops.intelligence import dedupe_findings, http_diff_score, load_feedback, serialize_findings, to_jsonl
 from hunterops.logging_utils import setup_logging
 from hunterops.plugin_loader import enabled_plugins, load_plugins
 from hunterops.program_packs import load_program_packs, resolve_pack
 from hunterops.reporting import export_csv, export_dashboard, export_html, export_json, export_markdown, write_json
+from hunterops.runtime_paths import ensure_directory, resolve_path
 from hunterops.storage import PostgresStorage
 from hunterops.types import Task
 
@@ -36,7 +40,7 @@ def parse_args() -> argparse.Namespace:
 def collect_targets(args: argparse.Namespace) -> list[str]:
     if args.target:
         return [args.target.strip()]
-    path = Path(args.targets_file)
+    path = resolve_path(args.targets_file)
     if not path.exists():
         return []
     return [x.strip() for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
@@ -44,12 +48,12 @@ def collect_targets(args: argparse.Namespace) -> list[str]:
 
 def resolve_plugins(config: dict[str, Any], args: argparse.Namespace) -> list[str]:
     if args.plugins:
-        return [x.strip() for x in args.plugins.split(",") if x.strip()]
+        return [x.strip().lower() for x in args.plugins.split(",") if x.strip()]
     names = enabled_plugins(config)
     if args.full_scan:
         return names
     # sane default
-    default_set = {"recon", "fingerprint", "scan", "cors", "takeover", "playwright_capture"}
+    default_set = {"recon", "fingerprint", "scan", "cors", "takeover", "playwright_capture", "business_logic_sniper", "race_condition_turbo"}
     return [n for n in names if n in default_set]
 
 
@@ -98,22 +102,41 @@ def baseline_compare(rows: list[dict[str, Any]], baseline_path: Path) -> dict[st
 
 
 async def run_async(args: argparse.Namespace) -> int:
-    config = load_config(Path(args.config))
+    config_path = resolve_path(args.config)
+    config = load_config(config_path)
     runtime = get_runtime(config)
+    pool_cfg = config.get("http_pool", {}) if isinstance(config.get("http_pool"), dict) else {}
+    configure_http_pool(
+        max_connections=int(pool_cfg.get("max_connections", max(50, int(runtime.get("concurrency", 8)) * 12))),
+        max_keepalive_connections=int(pool_cfg.get("max_keepalive_connections", max(20, int(runtime.get("concurrency", 8)) * 4))),
+        keepalive_expiry=float(pool_cfg.get("keepalive_expiry", 10.0)),
+        verify_ssl=bool(pool_cfg.get("verify_ssl", True)),
+        http2=bool(pool_cfg.get("http2", False)),
+        retries=int(pool_cfg.get("retries", 0)),
+        linux_socket_tuning=bool(pool_cfg.get("linux_socket_tuning", True)),
+    )
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = ensure_directory(resolve_path(args.out_dir), mode=0o755)
     logger = setup_logging(out_dir / f"engine_{ts}.jsonl", verbose=args.verbose)
-    config_hash = hashlib.sha256(Path(args.config).read_bytes()).hexdigest() if Path(args.config).exists() else ""
+    config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest() if config_path.exists() else ""
 
     targets = collect_targets(args)
     if not targets:
         logger.error("No targets provided.")
+        await close_async_http_client()
         return 2
 
     plugin_names = resolve_plugins(config, args)
+    dep_report = evaluate_runtime_dependencies(config, plugin_names)
+    for msg in dep_report["critical_warnings"]:
+        logger.critical(msg)
+    plugin_names = filter_enabled_plugins(plugin_names, dep_report["disabled_plugins"])
+    if not plugin_names:
+        logger.error("No runnable plugins after dependency checks.")
+        await close_async_http_client()
+        return 5
     plugins = load_plugins(plugin_names)
-    packs = load_program_packs(Path(config.get("program_packs", {}).get("file", "config/program_packs.yaml")))
+    packs = load_program_packs(resolve_path(config.get("program_packs", {}).get("file", "config/program_packs.yaml")))
     context = {"config": config, "runtime": runtime, "logger": logger}
 
     tasks = build_tasks(targets, plugin_names, include_platform_sync=True, packs=packs)
@@ -133,7 +156,7 @@ async def run_async(args: argparse.Namespace) -> int:
     executor = TaskExecutor(plugins=plugins, context=context, logger=logger)
     findings = await executor.run(tasks)
     findings = dedupe_findings(findings)
-    feedback = load_feedback(Path(config.get("feedback", {}).get("file", "data/processed/feedback_weights.json")))
+    feedback = load_feedback(resolve_path(config.get("feedback", {}).get("file", "data/processed/feedback_weights.json")))
     rows = serialize_findings(findings, feedback=feedback)
 
     label = args.target if args.target else f"{len(targets)}-targets"
@@ -151,6 +174,7 @@ async def run_async(args: argparse.Namespace) -> int:
     db_optional = os.getenv("HUNTEROPS_DB_OPTIONAL", "0") == "1"
     if pg_enabled and not dsn and not db_optional:
         logger.error(f"postgres enabled but missing env {dsn_env}")
+        await close_async_http_client()
         return 3
     if pg_enabled and dsn:
         try:
@@ -160,6 +184,7 @@ async def run_async(args: argparse.Namespace) -> int:
         except Exception as err:
             logger.error(f"postgres_write=failed err={err}")
             if not db_optional:
+                await close_async_http_client()
                 return 4
 
     baseline = baseline_compare(rows, out_dir / "baseline.json")
@@ -182,10 +207,12 @@ async def run_async(args: argparse.Namespace) -> int:
             "findings_count": len(rows),
         },
     )
+    await close_async_http_client()
     return 0
 
 
 def main() -> int:
+    install_uvloop_if_available()
     args = parse_args()
     try:
         return asyncio.run(run_async(args))

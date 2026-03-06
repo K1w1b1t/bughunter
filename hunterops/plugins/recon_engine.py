@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from hunterops.http_client import request_http_async
@@ -11,6 +14,8 @@ from hunterops.types import Finding, Task
 
 SCRIPT_RE = re.compile(r"""<script[^>]+src=['"]([^'"]+)['"]""", re.IGNORECASE)
 API_RE = re.compile(r"""['"](/api/[A-Za-z0-9_/\-?=&{}]+)['"]""")
+LINUX_BIN_DIR = Path("/usr/local/bin")
+CRITICAL_RECON_BINARIES = ("subfinder", "httpx", "nuclei")
 
 
 class _Parser(HTMLParser):
@@ -49,11 +54,23 @@ def _path(value: str):
     return Path(value)
 
 
+def _resolve_binary(tool: str) -> str:
+    name = str(tool or "").strip()
+    if not name:
+        return ""
+    preferred = LINUX_BIN_DIR / name
+    if preferred.exists() and os.access(preferred, os.X_OK):
+        return str(preferred)
+    found = shutil.which(name)
+    return str(found) if found else ""
+
+
 class PluginImpl(Plugin):
     name = "recon_engine"
 
     async def run(self, task: Task, context: dict) -> list[Finding]:
         cfg = context["config"].get("modules", {}).get(self.name, {})
+        logger = context.get("logger")
         timeout = int(context["runtime"]["timeout_seconds"])
         base = f"https://{task.target}"
         seed_paths = cfg.get("seed_paths", ["/", "/login", "/api", "/docs"])
@@ -68,6 +85,15 @@ class PluginImpl(Plugin):
         forms: list[dict[str, object]] = []
         methods: set[str] = {"GET"}
         js_assets: set[str] = set()
+        missing_tools = [tool for tool in CRITICAL_RECON_BINARIES if not _resolve_binary(tool)]
+        if missing_tools and logger is not None:
+            try:
+                logger.warning(
+                    "recon_engine_missing_binaries "
+                    + ",".join([f"{tool}:/usr/local/bin/{tool}" for tool in missing_tools])
+                )
+            except Exception:
+                pass
 
         while queue and len(seen) < max_pages:
             url = queue.pop(0)
@@ -134,6 +160,7 @@ class PluginImpl(Plugin):
                     "forms": forms[:80],
                     "http_methods": sorted(methods),
                     "javascript_assets": sorted(js_assets)[:80],
+                    "missing_binaries": missing_tools,
                 },
                 metadata={"novelty": 78, "confidence": 80, "impact": 44, "discovery_source": "recon_engine", "endpoints": sorted(endpoints)},
             )

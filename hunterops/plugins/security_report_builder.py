@@ -7,15 +7,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from hunterops.async_io import read_json, write_json, write_text
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
 
-def _load(path: Path) -> list[dict[str, Any]]:
+async def _load(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = await read_json(path)
     except Exception:
         return []
     rows = doc.get("findings", []) if isinstance(doc, dict) else doc
@@ -40,7 +41,7 @@ class PluginImpl(Plugin):
         source = Path(cfg.get("findings_source", "data/reports/engine/findings.json"))
         out_dir = Path(cfg.get("out_dir", "data/reports/engine/security_reports"))
         out_dir.mkdir(parents=True, exist_ok=True)
-        rows = [r for r in _load(source) if str(r.get("target", "")) == task.target]
+        rows = [r for r in await _load(source) if str(r.get("target", "")) == task.target]
         if not rows:
             return []
 
@@ -71,7 +72,7 @@ class PluginImpl(Plugin):
         md_path = out_dir / f"security_report_{task.target.replace('.', '_')}_{ts}.md"
         html_path = out_dir / f"security_report_{task.target.replace('.', '_')}_{ts}.html"
 
-        json_path.write_text(json.dumps({"target": task.target, "count": len(items), "items": items}, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        await write_json(json_path, {"target": task.target, "count": len(items), "items": items})
         md_lines = [f"# Security Report - {task.target}", "", f"Generated: {datetime.now(UTC).isoformat().replace('+00:00', 'Z')}", ""]
         for it in items:
             md_lines.extend(
@@ -85,7 +86,7 @@ class PluginImpl(Plugin):
                     "",
                 ]
             )
-        md_path.write_text("\n".join(md_lines), encoding="utf-8")
+        await write_text(md_path, "\n".join(md_lines))
 
         rows_html = []
         for it in items:
@@ -106,7 +107,7 @@ class PluginImpl(Plugin):
             "<table><thead><tr><th>Title</th><th>Severity</th><th>Endpoint</th><th>Discovery Source</th></tr></thead>"
             f"<tbody>{''.join(rows_html)}</tbody></table></body></html>"
         )
-        html_path.write_text(html_doc, encoding="utf-8")
+        await write_text(html_path, html_doc)
 
         return [
             Finding(

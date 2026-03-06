@@ -1,0 +1,3 @@
+{"program":"your-program-handle","asset":"api.yourcompany.com","bug_class":"idor","result":"accepted","payout_usd":1200,"submitted_at":"2026-03-01T14:00:00Z"}
+{"program":"your-program-handle","asset":"app.yourcompany.com","bug_class":"xss","result":"duplicate","payout_usd":0,"submitted_at":"2026-03-02T09:30:00Z"}
+{"program":"your-program-handle","asset":"api.yourcompany.com","bug_class":"cors","result":"informative","payout_usd":0,"submitted_at":"2026-03-03T18:15:00Z"}

@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from hunterops.async_io import read_json
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
 
-def _load_findings(path: Path) -> list[dict[str, Any]]:
+async def _load_findings(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = await read_json(path)
     except Exception:
         return []
     rows = doc.get("findings", []) if isinstance(doc, dict) else doc
@@ -25,7 +25,7 @@ class PluginImpl(Plugin):
     async def run(self, task: Task, context: dict) -> list[Finding]:
         cfg = context["config"].get("modules", {}).get(self.name, {})
         source = Path(cfg.get("findings_source", "data/reports/engine/findings.json"))
-        rows = [r for r in _load_findings(source) if str(r.get("target", "")) == task.target]
+        rows = [r for r in await _load_findings(source) if str(r.get("target", "")) == task.target]
         if not rows:
             return []
 

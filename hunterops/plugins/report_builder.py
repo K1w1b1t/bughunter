@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from hunterops.async_io import read_json, write_json, write_text
 from hunterops.plugin_base import Plugin
 from hunterops.types import Finding, Task
 
 
-def load_rows(path: Path) -> list[dict[str, Any]]:
+async def load_rows(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = await read_json(path)
     except Exception:
         return []
     if isinstance(doc, dict):
@@ -58,7 +58,7 @@ class PluginImpl(Plugin):
         source = Path(cfg.get("findings_source", "data/reports/engine/findings.json"))
         out_dir = Path(cfg.get("out_dir", "data/reports/engine/bug_reports"))
         out_dir.mkdir(parents=True, exist_ok=True)
-        rows = [r for r in load_rows(source) if str(r.get("target", "")) == task.target]
+        rows = [r for r in await load_rows(source) if str(r.get("target", "")) == task.target]
         if not rows:
             return []
 
@@ -127,8 +127,8 @@ class PluginImpl(Plugin):
                 ]
             )
 
-        report_json.write_text(json.dumps({"target": task.target, "count": len(payload), "items": payload}, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-        report_md.write_text("\n".join(lines), encoding="utf-8")
+        await write_json(report_json, {"target": task.target, "count": len(payload), "items": payload})
+        await write_text(report_md, "\n".join(lines))
 
         return [
             Finding(

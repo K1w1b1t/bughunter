@@ -1,24 +1,41 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 import shlex
 import shutil
+from pathlib import Path
 from typing import Any
 
+LINUX_BIN_DIR = Path("/usr/local/bin")
 
 DEFAULT_UAS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/123.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/122.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/124.0",
 ]
 
 
 async def run_command(command: str, timeout: int, stealth_mode: bool, proxies: list[str]) -> dict[str, Any]:
     parts = shlex.split(command)
     tool = parts[0]
-    if shutil.which(tool) is None:
+    resolved_tool = tool
+    if "/" not in tool:
+        preferred = LINUX_BIN_DIR / tool
+        if preferred.exists() and os.access(preferred, os.X_OK):
+            resolved_tool = str(preferred)
+        else:
+            found = shutil.which(tool)
+            if found:
+                resolved_tool = found
+            else:
+                resolved_tool = ""
+    elif shutil.which(tool):
+        resolved_tool = str(shutil.which(tool))
+    if not resolved_tool:
         return {"rc": 127, "stdout": "", "stderr": f"tool not found: {tool}"}
+    parts[0] = resolved_tool
 
     env = None
     if stealth_mode:
@@ -45,4 +62,3 @@ async def run_command(command: str, timeout: int, stealth_mode: bool, proxies: l
         "stdout": out.decode("utf-8", errors="ignore"),
         "stderr": err.decode("utf-8", errors="ignore"),
     }
-

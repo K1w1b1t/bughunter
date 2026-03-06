@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from hunterops.async_io import read_json
 from hunterops.http_client import json_keys, request_http_async
 from hunterops.intelligence import http_diff_score
 from hunterops.plugin_base import Plugin
@@ -13,11 +13,11 @@ from hunterops.session_profiles import auth_header, load_sessions
 from hunterops.types import Finding, Task
 
 
-def _load_payloads(path: Path) -> list[dict[str, Any]]:
+async def _load_payloads(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = await read_json(path)
     except Exception:
         return []
     rows = doc.get("payloads", []) if isinstance(doc, dict) else []
@@ -51,7 +51,7 @@ class PluginImpl(Plugin):
         cfg = context["config"].get("modules", {}).get(self.name, {})
         timeout = int(context["runtime"]["timeout_seconds"])
         payload_file = _path(cfg.get("payload_file", "data/processed/smart_payloads.json"))
-        payloads = _load_payloads(payload_file)
+        payloads = await _load_payloads(payload_file)
         if not payloads:
             return []
         sessions = load_sessions(_path(cfg.get("sessions_file", "data/sessions.yaml")))

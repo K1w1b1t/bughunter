@@ -1,0 +1,19 @@
+programs:
+  - name: your-program-1
+    platform: hackerone
+    in_scope:
+      - "*.yourcompany.com"
+      - "api.yourcompany.com"
+    out_of_scope:
+      - "dev.yourcompany.com"
+      - "staging.yourcompany.com"
+    notes: "Use only official in-scope assets from program policy"
+
+  - name: your-program-2
+    platform: bugcrowd
+    in_scope:
+      - "app.target2.com"
+      - "api.target2.com"
+    out_of_scope:
+      - "test.target2.com"
+    notes: "Replace with your authorized scope"

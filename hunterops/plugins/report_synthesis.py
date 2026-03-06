@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +12,9 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from hunterops.async_io import read_json, write_text
 from hunterops.plugin_base import Plugin
+from hunterops.runtime_paths import resolve_path
 from hunterops.storage import PostgresStorage
 from hunterops.types import Finding, Task
 
@@ -67,12 +71,12 @@ def _mask_headers(headers: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def _load_json(path: str) -> dict[str, Any]:
+async def _load_json(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         return {}
     try:
-        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc = await read_json(p)
     except Exception:
         return {}
     return doc if isinstance(doc, dict) else {}
@@ -155,7 +159,7 @@ class ExploitDocGenerator:
 class PluginImpl(Plugin):
     name = "report_synthesis"
 
-    def _load_rows(self, task: Task, context: dict, run_id: str) -> list[dict[str, Any]]:
+    async def _load_rows(self, task: Task, context: dict, run_id: str) -> list[dict[str, Any]]:
         payload = task.payload if isinstance(task.payload, dict) else {}
         pg_cfg = context["config"].get("storage", {}).get("postgres", {})
         dsn_env = str(pg_cfg.get("dsn_env", "HUNTEROPS_POSTGRES_DSN"))
@@ -163,7 +167,7 @@ class PluginImpl(Plugin):
         if bool(pg_cfg.get("enabled", False)) and dsn and run_id:
             try:
                 storage = PostgresStorage(dsn=dsn, enabled=True)
-                rows = storage.fetch_run_findings(run_id=run_id, target=task.target)
+                rows = await asyncio.to_thread(storage.fetch_run_findings, run_id, task.target)
                 if rows:
                     return rows
             except Exception:
@@ -182,21 +186,21 @@ class PluginImpl(Plugin):
     def _risk_score(row: dict[str, Any]) -> float:
         return float(row.get("risk_score", 0) or 0)
 
-    def _load_evidence_artifacts(self, evidence: dict[str, Any]) -> dict[str, Any]:
+    async def _load_evidence_artifacts(self, evidence: dict[str, Any]) -> dict[str, Any]:
         merged = evidence.copy()
         req_file = str(evidence.get("request_file", "")).strip()
         resp_file = str(evidence.get("response_file", "")).strip()
         evidence_ref = str(evidence.get("evidence_ref", "")).strip()
         if req_file:
-            req_doc = _load_json(req_file)
+            req_doc = await _load_json(req_file)
             if req_doc:
                 merged.setdefault("request", req_doc)
         if resp_file:
-            resp_doc = _load_json(resp_file)
+            resp_doc = await _load_json(resp_file)
             if resp_doc:
                 merged.setdefault("response", resp_doc)
         if evidence_ref:
-            ref_doc = _load_json(evidence_ref)
+            ref_doc = await _load_json(evidence_ref)
             if ref_doc:
                 merged.setdefault("evidence_ref_payload", ref_doc)
         return merged
@@ -248,7 +252,7 @@ class PluginImpl(Plugin):
             return sev
         return "medium"
 
-    def _notify_critical(self, title: str, report_path: Path, cfg: dict[str, Any], logger: Any) -> None:
+    async def _notify_critical(self, title: str, report_path: Path, cfg: dict[str, Any], logger: Any) -> None:
         if not bool(cfg.get("enable_notifications", True)):
             return
         webhook = str(cfg.get("webhook_url", "")).strip()
@@ -263,32 +267,31 @@ class PluginImpl(Plugin):
         }
         if webhook:
             try:
-                req = Request(
-                    webhook,
-                    data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urlopen(req, timeout=4):
-                    pass
+                def _post() -> None:
+                    req = Request(
+                        webhook,
+                        data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urlopen(req, timeout=4):
+                        pass
+
+                await asyncio.to_thread(_post)
             except Exception:
                 logger.warning("report_synthesis_webhook_notify_failed")
-        if os.name == "nt" and bool(cfg.get("enable_os_notification", True)):
-            safe_title = title.replace("'", "").replace('"', "")
-            safe_path = str(report_path).replace("'", "").replace('"', "")
-            ps_cmd = (
-                "$wshell = New-Object -ComObject Wscript.Shell; "
-                f"$null = $wshell.Popup('HunterOps CRITICAL: {safe_title}\\n{safe_path}', 4, 'HunterOps', 64)"
-            )
-            try:
-                subprocess.Popen(
-                    ["powershell", "-NoProfile", "-Command", ps_cmd],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,
-                )
-            except Exception:
-                logger.warning("report_synthesis_os_notify_failed")
+        if os.name == "posix" and bool(cfg.get("enable_os_notification", True)):
+            notify = shutil.which("notify-send")
+            if notify:
+                try:
+                    subprocess.Popen(
+                        [notify, "HunterOps CRITICAL", f"{title}\n{report_path}"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    logger.warning("report_synthesis_os_notify_failed")
 
     async def run(self, task: Task, context: dict) -> list[Finding]:
         cfg = context["config"].get("modules", {}).get(self.name, {})
@@ -299,11 +302,11 @@ class PluginImpl(Plugin):
         threshold = float(cfg.get("confidence_threshold", 80))
         context_a = str(cfg.get("auth_context_a", "Auth_Context_A"))
         context_b = str(cfg.get("auth_context_b", "Auth_Context_B"))
-        rows = self._load_rows(task=task, context=context, run_id=run_id)
+        rows = await self._load_rows(task=task, context=context, run_id=run_id)
         if not rows:
             return []
 
-        out_root = Path(str(cfg.get("out_dir", "data/reports")))
+        out_root = resolve_path(str(cfg.get("out_dir", "data/reports")))
         run_dir = out_root / f"run_{run_id}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -317,7 +320,7 @@ class PluginImpl(Plugin):
             title = str(row.get("title", "Untitled finding"))
             severity = self._severity_label(row.get("severity", "medium"))
             evidence = row.get("evidence", {}) if isinstance(row.get("evidence"), dict) else {}
-            evidence = self._load_evidence_artifacts(evidence)
+            evidence = await self._load_evidence_artifacts(evidence)
             endpoint = _extract_endpoint(evidence)
             parameter = str(evidence.get("tested_parameter", "")).strip()
             if not parameter:
@@ -368,10 +371,10 @@ class PluginImpl(Plugin):
                 remediation,
                 "",
             ]
-            report_path.write_text("\n".join(markdown), encoding="utf-8")
+            await write_text(report_path, "\n".join(markdown))
 
             if severity == "critical":
-                self._notify_critical(title=title, report_path=report_path, cfg=cfg, logger=logger)
+                await self._notify_critical(title=title, report_path=report_path, cfg=cfg, logger=logger)
 
             synthesized.append(
                 Finding(
