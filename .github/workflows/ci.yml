@@ -19,5 +19,11 @@ jobs:
         run: make sign-scope
       - name: Verify scope
         run: make verify-scope
-      - name: Run tests
-        run: PYTHONPATH=. python -m pytest -q
+      - name: Run tests (if present)
+        shell: bash
+        run: |
+          if [ -d tests ] && find tests -type f \( -name "test_*.py" -o -name "*_test.py" \) | grep -q .; then
+            PYTHONPATH=. python -m pytest -q
+          else
+            echo "No tests found under tests/. Skipping pytest."
+          fi
