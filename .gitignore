@@ -44,6 +44,7 @@ tools/native/*.exe
 tools/native/*.o
 tools/native/*.obj
 tools/native/*.out
+examples/scope_signed.json
 
 # Keep placeholders and baseline examples
 !data/raw/.gitkeep
