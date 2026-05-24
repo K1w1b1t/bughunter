@@ -1,0 +1,2 @@
+{"finding_id":"F-2026-0001","program":"example-public-program","result":"accepted","bug_class":"idor","surface":"api","first_seen_utc":"2026-03-04T13:40:00Z","submitted_utc":"2026-03-04T16:10:00Z","payout_usd":1200,"hours_spent":4.5}
+{"finding_id":"F-2026-0002","program":"example-public-program","result":"duplicate","bug_class":"xss","surface":"web","first_seen_utc":"2026-03-03T11:00:00Z","submitted_utc":"2026-03-05T10:00:00Z","payout_usd":0,"hours_spent":2.0}

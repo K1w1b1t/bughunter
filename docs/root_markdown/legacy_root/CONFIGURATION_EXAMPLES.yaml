@@ -1,0 +1,812 @@
+# 🔧 HUNTEROPS-AI: CONFIGURATION EXAMPLES
+
+**Complete YAML configuration files for production deployment**
+
+---
+
+## 1. `config/engine.yaml` (DEFINITIVE VERSION WITH LLM)
+
+```yaml
+# HunterOps Engine Configuration
+# Version: 2.0 (with LLM integration)
+# Last Updated: 2026-03-20
+
+runtime:
+  # Concurrency & Performance
+  concurrency: 6                              # MAX workers
+  timeout_seconds: 45                         # Per-request timeout
+  task_timeout_seconds: 240                   # Per-task timeout
+  batch_heartbeat_seconds: 15                 # Health check interval
+  
+  # Plugin system
+  plugin_metrics_enabled: true
+  plugin_profile: full
+  
+  # =====================================================
+  # RATE LIMITING (CRITICAL - DO NOT CHANGE)
+  # =====================================================
+  rate_limit_per_sec: 10                      # HARD LIMIT: 10 req/s
+  global_http_rate_limit_per_sec: 10          # HARD LIMIT: 10 req/s
+  global_http_max_inflight: 10                # HARD LIMIT: 10 concurrent
+  
+  # =====================================================
+  # ADAPTIVE LEVELS (Orchestration Logic)
+  # =====================================================
+  adaptive_levels:
+    enabled: true
+    min_level: 1                              # Level 1 = Passive Recon
+    max_level: 3                              # Level 3 = Aggressive Fuzzing
+    start_level: 1                            # Always start passive
+    escalate_after_clean_rounds: 1            # How many rounds without findings?
+    demote_on_feedback: true                  # Program complains → downgrade
+    demote_on_timeout: true                   # Many timeouts → downgrade
+  
+  # =====================================================
+  # ENDPOINT CACHE (Reuse previous discoveries)
+  # =====================================================
+  endpoint_cache_enabled: true
+  endpoint_cache_ttl_hours: 24                # Cache valid for 24 hours
+  endpoint_cache_max_entries: 50000
+  
+  # =====================================================
+  # PERSISTENCE & RECOVERY
+  # =====================================================
+  persist_tasks: true                         # Save state between restarts
+  task_store_backend: auto                    # Auto-detect SQLite vs PostgreSQL
+  task_store_path: data/processed/task_queue.db
+  
+  # =====================================================
+  # PLUGINS TO SEED (Initial modules)
+  # =====================================================
+  seed_plugins:
+    - asset_discovery_engine
+    - recon_engine
+    - surface_massive
+    - surface_mapper
+    - surface_expansion
+    - hidden_route_discovery
+    - hidden_route_detector
+    - crawler_intelligent
+    - intelligent_crawler
+    - deep_js_intelligence
+    - deep_js_analyzer
+    - javascript_deep_analysis
+    - js_route_mapper
+    - parameter_enum
+    - undocumented_api
+    - graphql_scan
+    - cors
+    - takeover
+  
+  # =====================================================
+  # DEFAULT PLUGINS (Always run)
+  # =====================================================
+  default_plugins:
+    - recon
+    - fingerprint
+    - scan
+    - cors
+    - takeover
+    - playwright_capture
+    - business_logic_sniper
+    - race_condition_turbo
+  
+  # =====================================================
+  # SCOPE & AUTHORIZATION (CRITICAL)
+  # =====================================================
+  scope_enforce_http: true                    # Only allow http/https
+  scope_allowlist_patterns: []                # Additional whitelists (optional)
+  
+  # =====================================================
+  # CONFIGURATION FILES
+  # =====================================================
+  programs_file: config/programs.yaml
+  attack_chain_config: attack_pipeline.yaml
+  modules_spec_path: modules_spec.json
+  findings_schema_path: findings.schema.json
+  
+  # =====================================================
+  # VALIDATION & DATA RETENTION
+  # =====================================================
+  config_validation_enabled: true
+  config_validation_strict: false             # Log warnings vs errors
+  findings_validation_strict: false
+  findings_retention_hours: 0                 # 0 = infinite retention
+  evidence_retention_hours: 0
+  reports_retention_hours: 0
+  
+  # =====================================================
+  # ATTACK CHAIN (Exploitation sequencing)
+  # =====================================================
+  attack_chain_seed_enabled: true
+  attack_chain_seed_max_endpoints: 80         # Max endpoints per chain
+  attack_chain_auto_run: true                 # Auto-execute chains
+  
+  # =====================================================
+  # PRIORITY PATTERNS (What to target first)
+  # =====================================================
+  priority_endpoint_patterns:
+    - "admin"
+    - "internal"
+    - "v1/debug"
+    - "config"
+    - "staging"
+    - "export"
+    - "graphiql"
+  priority_endpoint_boost: 12                 # Boost score by 12%
+  
+  # =====================================================
+  # ROI PATTERNS (High-value endpoints)
+  # =====================================================
+  roi_endpoint_patterns:
+    - "payment"
+    - "checkout"
+    - "api/v1/users"
+    - "api/v1/orders"
+    - "api/v1/transactions"
+  
+  # =====================================================
+  # NOISE REDUCTION (False positive filters)
+  # =====================================================
+  endpoint_noise_patterns: []
+
+---
+
+# =====================================================
+# LLM CONFIGURATION (NEW)
+# =====================================================
+
+llm:
+  enabled: true
+  provider: "anthropic"                       # "anthropic" or "openai"
+  model: "claude-3-5-sonnet-20241022"
+  
+  # =====================================================
+  # DECISION THRESHOLDS
+  # =====================================================
+  min_heuristic_confidence_for_llm: 0.50      # If heuristic < 0.50, skip LLM
+  min_llm_confidence_required: 0.80            # Threshold for POC_VALID
+  
+  # =====================================================
+  # RATE LIMITING (API credits protection)
+  # =====================================================
+  max_llm_calls_per_minute: 20
+  max_llm_calls_per_day: 1000
+  timeout_seconds: 15                         # Max wait for LLM response
+  
+  # =====================================================
+  # CACHING (Reduce API calls)
+  # =====================================================
+  cache_enabled: true
+  cache_ttl_seconds: 3600                     # 1 hour
+  cache_backend: sqlite                       # Local caching
+  
+  # =====================================================
+  # FALLBACK BEHAVIOR (If LLM fails)
+  # =====================================================
+  fallback_strategy: "heuristic"              # Use pattern-matching only
+  # Options: "heuristic" (be smart), "conservative" (assume false_positive)
+
+anthropic:
+  api_key_env: "ANTHROPIC_API_KEY"
+  max_tokens: 500
+  temperature: 0.3                            # Lower = more consistent
+
+---
+
+# =====================================================
+# NUCLEI CONFIGURATION
+# =====================================================
+
+nuclei:
+  enabled: true
+  version: "3.x"
+  
+  # severity levels to include
+  severities:
+    - critical
+    - high
+    - medium
+    - low
+  
+  # Template curation
+  templates_path: "config/nuclei-curation.yaml"
+  
+  # Performance
+  rate_limit: 10
+  timeout: 45
+  max_retries: 2
+
+---
+
+# =====================================================
+# HTTPX CONFIGURATION
+# =====================================================
+
+httpx:
+  enabled: true
+  
+  # Port discovery
+  ports:
+    - 80
+    - 443
+    - 8080
+    - 8443
+    - 3000
+    - 5000
+  
+  # Detection options
+  detect_status_code: true
+  detect_technologies: true
+  collect_headers: true
+
+---
+
+# =====================================================
+# SUBFINDER CONFIGURATION
+# =====================================================
+
+subfinder:
+  enabled: true
+  method: passive                             # passive only (no active scanning)
+  
+  # Sources to query
+  sources:
+    - alienvault
+    - censys
+    - certspotter
+    - crtsh
+    - dnsdumpster
+    - hackertarget
+    - intelx
+    - shodan
+    - virustotal
+    - zoomeye
+
+---
+
+# =====================================================
+# DISCORD NOTIFICATIONS (NEW)
+# =====================================================
+
+discord:
+  enabled: true
+  bot_name: "Pinguinho"
+  
+  # Webhook URLs (from environment variables)
+  recon_webhook_url: "${DISCORD_RECON_WEBHOOK}"
+  recon_webhook_env: "DISCORD_RECON_WEBHOOK"
+  
+  findings_webhook_url: "${DISCORD_FINDINGS_WEBHOOK}"
+  findings_webhook_env: "DISCORD_FINDINGS_WEBHOOK"
+  
+  operations_webhook_url: "${DISCORD_OPS_WEBHOOK}"
+  operations_webhook_env: "DISCORD_OPS_WEBHOOK"
+  
+  errors_webhook_url: "${DISCORD_ERRORS_WEBHOOK}"
+  errors_webhook_env: "DISCORD_ERRORS_WEBHOOK"
+  
+  # Performance
+  timeout_seconds: 4.0
+  max_concurrent: 4
+  send_startup_check: true
+  
+  # Deduplication (prevent spam)
+  recon_dedupe_ttl_seconds: 1800              # 30 minutes
+  findings_dedupe_ttl_seconds: 86400          # 24 hours
+  findings_dedupe_persist_max_entries: 20000
+  findings_dedupe_persist_file: "data/processed/discord_finding_dedupe.json"
+
+---
+
+# =====================================================
+# DATABASE (PostgreSQL)
+# =====================================================
+
+database:
+  enabled: true
+  type: "postgresql"
+  
+  # Connection (from environment)
+  host: "${POSTGRES_HOST}"
+  port: "${POSTGRES_PORT}"
+  username: "${POSTGRES_USER}"
+  password: "${POSTGRES_PASSWORD}"
+  database: "hunterops"
+  
+  # Pool settings
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  
+  # Retention policies
+  findings_retention_days: 0                  # 0 = infinite
+  events_retention_days: 90
+  sessions_retention_days: 180
+
+---
+
+# =====================================================
+# LOGGING & AUDIT
+# =====================================================
+
+logging:
+  level: "INFO"
+  format: "json"  # json or text
+  
+  # File rotation
+  max_bytes: 10485760  # 10 MB
+  backup_count: 10
+  
+  # Audit trail
+  audit_enabled: true
+  audit_path: "data/logs/audit_{date}.log"
+  
+  # Don't log these patterns (security)
+  redact_patterns:
+    - "bearer "
+    - "authorization: "
+    - "api.key"
+    - "secret"
+    - "password"
+
+---
+
+# =====================================================
+# METRICS & OBSERVABILITY
+# =====================================================
+
+metrics:
+  enabled: true
+  
+  # Prometheus
+  prometheus_port: 9090
+  prometheus_enabled: true
+  
+  # Grafana
+  grafana_enabled: true
+  grafana_dashboard_path: "grafana/dashboard.json"
+
+---
+
+# =====================================================
+# SESSION & STATE MANAGEMENT
+# =====================================================
+
+session:
+  # Session lifetime
+  session_timeout_seconds: 86400              # 24 hours
+  session_idle_timeout_seconds: 3600          # 1 hour idle
+  
+  # Persistence
+  persist_sessions: true
+  session_store_path: "data/sessions.yaml"
+  
+  # Health checks
+  health_check_interval_seconds: 300          # 5 minutes
+
+---
+
+# =====================================================
+# COMPLIANCE & SECURITY
+# =====================================================
+
+compliance:
+  # Scope validation
+  strict_scope_matching: true
+  require_signed_scope: true
+  
+  # Rules of engagement
+  check_automation_allowed: true
+  
+  # Rate limit enforcement
+  enforce_rate_limits: true
+  circuit_breaker_enabled: true
+  circuit_breaker_threshold: 10               # errors before circuit opens
+  
+  # Secrets protection
+  redact_secrets_in_logs: true
+  redact_secrets_in_discord: true
+
+```
+
+---
+
+## 2. `config/hunterops_llm_config.yaml` (NEW FILE)
+
+```yaml
+# HunterOps LLM Configuration
+# For AI-powered decision making and finding validation
+
+llm:
+  # =====================================================
+  # PROVIDER SETTINGS
+  # =====================================================
+  enabled: true
+  provider: "anthropic"                       # anthropic | openai | local
+  model: "claude-3-5-sonnet-20241022"         # Latest stable model
+  
+  # =====================================================
+  # CONFIDENCE THRESHOLDS
+  # =====================================================
+  # When does the system call LLM? When does it accept verdict?
+  
+  min_heuristic_confidence_for_llm: 0.50
+  # If pattern-matching confidence < 0.50, skip LLM (assume false positive)
+  
+  min_llm_confidence_required: 0.80
+  # Final confidence must be >= 0.80 for POC_VALID
+  
+  # =====================================================
+  # API RATE LIMITING (Protect budget)
+  # =====================================================
+  max_llm_calls_per_minute: 20                # Burst protection
+  max_llm_calls_per_day: 1000                 # Daily quota
+  
+  # What to do when rate limit hit?
+  rate_limit_behavior: "backoff"              # backoff | skip | alert
+  
+  # =====================================================
+  # TIMEOUT & PERFORMANCE
+  # =====================================================
+  timeout_seconds: 15                         # Max wait for response
+  retry_on_timeout: true
+  max_retries: 2
+  
+  # =====================================================
+  # CACHING (Reduce API calls)
+  # =====================================================
+  cache:
+    enabled: true
+    backend: "sqlite"                         # sqlite | redis (future)
+    ttl_seconds: 3600                         # Cache for 1 hour
+    max_entries: 10000
+    
+    # What to cache?
+    cache_triage_decisions: true              # Same endpoint pattern
+    cache_escalation_decisions: true
+    cache_llm_responses: true
+
+anthropic:
+  # =====================================================
+  # ANTHROPIC-SPECIFIC SETTINGS
+  # =====================================================
+  api_key_env: "ANTHROPIC_API_KEY"
+  
+  # Model parameters
+  max_tokens: 500                             # Response length limit
+  temperature: 0.3                            # 0=deterministic, 1=creative
+                                              # 0.3 = good for security analysis
+  
+  # System prompt
+  system_prompt_path: "SYSTEM_PROMPT.md"      # Main decision framework
+  system_prompt_version: "1.0"
+  
+  # Request parameters
+  top_p: 0.9                                  # Nucleus sampling
+  top_k: 20
+
+fallback:
+  # =====================================================
+  # WHAT IF LLM FAILS?
+  # =====================================================
+  strategy: "heuristic"
+  # Options:
+  # - "heuristic": Use pattern-matching confidence (risky, false positives)
+  # - "conservative": Assume false_positive (safe, may miss real vulns)
+  
+  # Retry configuration
+  enable_retry: true
+  retry_delay_seconds: 5
+  max_retries: 3
+  
+  # Fallback model (future: for redundancy)
+  fallback_provider: null                     # null = none configured
+  
+  # Alert on fallback
+  alert_on_fallback: true
+  alert_channel: "errors"
+
+logging:
+  # =====================================================
+  # DEBUG & AUDIT
+  # =====================================================
+  enabled: true
+  log_prompts: false                          # Don't log full prompts (privacy)
+  log_responses: false                        # Don't log full responses
+  log_api_calls: true                         # Log call count + tokens
+  log_cache_hits: true
+  
+  # Metrics
+  track_confidence_scores: true
+  track_verdict_distribution: true            # POC_VALID vs False_Positive ratio
+
+```
+
+---
+
+## 3. `.env.example` (Environment Variables Template)
+
+```bash
+# =====================================================
+# HUNTEROPS-AI PRODUCTION ENVIRONMENT
+# =====================================================
+# Copy to .env and fill with real values
+# NEVER commit .env to git!
+
+# =====================================================
+# LLM / AI
+# =====================================================
+ANTHROPIC_API_KEY=sk-ant-v7-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ANTHROPIC_API_ENDPOINT=https://api.anthropic.com/v1
+ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+
+# =====================================================
+# DATABASE
+# =====================================================
+POSTGRES_HOST=postgres.container.local
+POSTGRES_PORT=5432
+POSTGRES_USER=hunterops
+POSTGRES_PASSWORD=super_secure_password_here
+POSTGRES_DATABASE=hunterops
+
+# =====================================================
+# DISCORD WEBHOOKS
+# =====================================================
+DISCORD_RECON_WEBHOOK=https://discord.com/api/webhooks/xxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyy
+DISCORD_FINDINGS_WEBHOOK=https://discord.com/api/webhooks/xxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyy
+DISCORD_OPS_WEBHOOK=https://discord.com/api/webhooks/xxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyy
+DISCORD_ERRORS_WEBHOOK=https://discord.com/api/webhooks/xxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyy
+
+# =====================================================
+# HACKERONE API
+# =====================================================
+HACKERONE_API_USERNAME=your_h1_username
+HACKERONE_API_TOKEN=api_token_here_xxxxxxxx
+HACKERONE_API_ENDPOINT=https://api.hackerone.com
+
+# =====================================================
+# INTIGRITI API (if used)
+# =====================================================
+INTIGRITI_API_KEY=your_api_key_here
+INTIGRITI_API_ENDPOINT=https://api.intigriti.com
+
+# =====================================================
+# SCOPE & SIGNING
+# =====================================================
+HUNTEROPS_SCOPE_PATH=config/scope.json
+HUNTEROPS_SIGNER_KEY_PATH=config/signer.key
+HUNTEROPS_SIGNER_PUB_PATH=config/signer.pub
+
+# =====================================================
+# RUNTIME CONFIG
+# =====================================================
+HUNTEROPS_ENV=production              # production | staging | development
+HUNTEROPS_LOG_LEVEL=INFO              # DEBUG | INFO | WARNING | ERROR
+HUNTEROPS_DEBUG_MODE=false             # Enable verbose logging?
+
+# =====================================================
+# MONITORING & OBSERVABILITY
+# =====================================================
+PROMETHEUS_ENABLED=true
+PROMETHEUS_PORT=9090
+GRAFANA_ENABLED=true
+
+# =====================================================
+# OPTIONAL: Proxy
+# =====================================================
+# HTTP_PROXY=http://proxy.internal:8080
+# HTTPS_PROXY=http://proxy.internal:8080
+
+```
+
+---
+
+## 4. `config/scope.json.example` (Authorized Targets)
+
+```json
+{
+  "version": "1.0",
+  
+  "program_id": "h1_acme_corp",
+  "program_name": "Acme Corporation Bug Bounty",
+  
+  "authorized_by": "security@acme.com",
+  "authorized_date": "2026-03-01T00:00:00Z",
+  
+  "valid_from": "2026-03-01T00:00:00Z",
+  "valid_to": "2026-12-31T23:59:59Z",
+  
+  "targets": [
+    "*.acme.com",
+    "acme.com",
+    "api.acme.com",
+    "internal.acme.com"
+  ],
+  
+  "rules_of_engagement": "VDP program. No brute force. No DoS. No disruptive testing. Respect rate limits. Notify security@acme.com before any testing.",
+  
+  "exclusions": [
+    "*.staging.acme.com",
+    "*.development.acme.com",
+    "backup.acme.com"
+  ],
+  
+  "platform": "hackerone",
+  "platform_program_url": "https://hackerone.com/acme",
+  
+  "signature": "signature_hex_string_here",
+  "signature_algorithm": "RSA-SHA256",
+  "signer_public_key_fingerprint": "abc123def456"
+}
+```
+
+---
+
+## 5. `config/programs.yaml` (Managed Programs)
+
+```yaml
+programs:
+  
+  # =====================================================
+  # HACKERONE PROGRAM 1
+  # =====================================================
+  - id: "h1_acme_corp"
+    name: "Acme Corp - HackerOne"
+    platform: "hackerone"
+    
+    domains:
+      - "*.acme.com"
+      - "acme.com"
+    
+    rules_of_engagement: |
+      VDP Program. Automation allowed.
+      - No brute force
+      - No DoS
+      - Respect rate limits (max 10 req/s)
+      - No social engineering
+      
+    estimated_payout: "high"
+    estimated_avg_bounty: 1500
+    historical_payouts: 45  # Number of previous payouts
+    
+    # Targeting profile
+    priority_level: 1  # 1=highest, 3=lowest
+    active: true
+    
+    # Rate limit override (if different from global)
+    rate_limit_override: null  # null = use global (10 req/s)
+    
+    # Attack surface characteristics
+    tech_stack:
+      - nodejs
+      - express
+      - react
+      - mongodb
+    
+    known_vulnerabilities:  # From previous programs
+      - idor
+      - race_condition
+      - graphql_injection
+    
+    last_scanned: "2026-03-15T00:00:00Z"
+    
+  # =====================================================
+  # HACKERONE PROGRAM 2
+  # =====================================================
+  - id: "h1_startup_xyz"
+    name: "Startup XYZ - HackerOne"
+    platform: "hackerone"
+    
+    domains:
+      - "*.startup-xyz.io"
+      - "api.startup-xyz.io"
+    
+    rules_of_engagement: |
+      Private program. Automation allowed.
+      Max 5 req/s (lower than global to protect smaller company)
+      
+    estimated_payout: "medium"
+    estimated_avg_bounty: 300
+    historical_payouts: 8
+    
+    priority_level: 2
+    active: true
+    
+    rate_limit_override: 5  # Lower rate limit for this small company
+    
+    tech_stack:
+      - python
+      - django
+      - postgresql
+    
+    known_vulnerabilities:
+      - sql_injection
+    
+    last_scanned: null  # Never scanned before
+    
+  # =====================================================
+  # INTIGRITI PROGRAM
+  # =====================================================
+  - id: "intigriti_enterprise_corp"
+    name: "Enterprise Corp - Intigriti"
+    platform: "intigriti"
+    
+    domains:
+      - "*.enterprise.com"
+    
+    rules_of_engagement: |
+      Automated scanning is NOT allowed.
+      Manual only. Notify before testing.
+      
+    estimated_payout: "very_high"
+    
+    priority_level: 1
+    active: true
+    
+    rate_limit_override: 1  # Very conservative
+    
+    last_scanned: "2026-03-10T00:00:00Z"
+
+```
+
+---
+
+## 6. Loading Configuration in Python
+
+```python
+# hunterops/config_loader.py
+
+import yaml
+from pathlib import Path
+
+def load_engine_config() -> dict:
+    """Load runtime engine configuration."""
+    path = Path("config/engine.yaml")
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
+
+def load_llm_config() -> dict:
+    """Load LLM-specific configuration."""
+    path = Path("config/hunterops_llm_config.yaml")
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
+
+def load_programs() -> list[dict]:
+    """Load managed programs."""
+    path = Path("config/programs.yaml")
+    with open(path, 'r') as f:
+        data = yaml.safe_load(f)
+        return data.get("programs", [])
+
+# Usage
+if __name__ == "__main__":
+    engine_cfg = load_engine_config()
+    llm_cfg = load_llm_config()
+    programs = load_programs()
+    
+    print(f"Rate limit: {engine_cfg['runtime']['rate_limit_per_sec']} req/s")
+    print(f"LLM enabled: {llm_cfg['llm']['enabled']}")
+    print(f"Programs loaded: {len(programs)}")
+```
+
+---
+
+## ✅ Configuration Validation
+
+```bash
+# Validate all YAML files
+yamllint config/engine.yaml
+yamllint config/hunterops_llm_config.yaml
+yamllint config/programs.yaml
+
+# Validate scope file (JSON schema)
+jsonschema -i config/scope.json config/scope.schema.json
+
+# Test environment loading
+python -c "from hunterops.config_loader import load_engine_config; print('OK')"
+```
+
+---
+
+**Ready to deploy? Create these files and run the validation tests!**

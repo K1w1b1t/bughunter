@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: hunterops-dev-db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hunterops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunterops_dev_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-hunterops}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hunterops} -d ${POSTGRES_DB:-hunterops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    volumes:
+      - type: bind
+        source: ${HUNTEROPS_WSL_DATA_ROOT:?set HUNTEROPS_WSL_DATA_ROOT to /home/<user>/hunterops-dev}/postgres
+        target: /var/lib/postgresql/data
+    networks:
+      - hunterops-dev
+
+  dbgate:
+    image: dbgate/dbgate:latest
+    container_name: hunterops-dev-dbgate
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CONNECTIONS: hunterops
+      LABEL_hunterops: HunterOps Local
+      SERVER_hunterops: db
+      PORT_hunterops: 5432
+      ENGINE_hunterops: postgres@dbgate-plugin-postgres
+      DATABASE_hunterops: ${POSTGRES_DB:-hunterops}
+      USER_hunterops: ${POSTGRES_USER:-hunterops}
+      PASSWORD_hunterops: ${POSTGRES_PASSWORD:-hunterops_dev_pass}
+      LOGINS: admin
+      LOGIN_admin: admin
+      PASSWORD_admin: ${DBGATE_PASSWORD:-change_this_local_password}
+      REQUIRE_LOGINS: "true"
+    ports:
+      - "${DBGATE_PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: ${HUNTEROPS_WSL_DATA_ROOT:?set HUNTEROPS_WSL_DATA_ROOT to /home/<user>/hunterops-dev}/dbgate
+        target: /root/.dbgate
+    networks:
+      - hunterops-dev
+
+networks:
+  hunterops-dev:
+    driver: bridge

@@ -1,0 +1,419 @@
+﻿# ===================================================================
+# HunterOps-AI: Docker Compose v2 (Production-Ready)
+# ===================================================================
+# Environment: Oracle Cloud VPS (Ubuntu 22.04 LTS)
+# Python: 3.12-slim-bookworm
+# PostgreSQL: 16-alpine with pgaudit, pg_stat_statements
+# Redis: 7-alpine (caching + session store)
+# ===================================================================
+
+version: '3.9'
+
+services:
+  # ===================================================================
+  # PostgreSQL 16: Master Database with Audit Logging
+  # ===================================================================
+  db:
+    image: postgres:16-alpine
+    container_name: hunterops-db
+    restart: unless-stopped
+    init: true
+    
+    # Environment
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hunterops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      POSTGRES_DB: ${POSTGRES_DB:-hunterops}
+      POSTGRES_INITDB_ARGS: >
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=1GB
+        -c maintenance_work_mem=64MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=4MB
+        -c min_wal_size=4GB
+        -c max_wal_size=16GB
+        -c max_worker_processes=4
+        -c max_parallel_workers_per_gather=2
+        -c max_parallel_workers=4
+        -c max_parallel_maintenance_workers=2
+
+    # Health Check
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          pg_isready -U ${POSTGRES_USER:-hunterops} -d ${POSTGRES_DB:-hunterops} &&
+          psql -U ${POSTGRES_USER:-hunterops} -d ${POSTGRES_DB:-hunterops} -c "SELECT 1" > /dev/null 2>&1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    # Volumes
+    volumes:
+      # Data persistence
+      - pgdata:/var/lib/postgresql/data
+      
+      # Init scripts for extensions
+      - ./scripts/docker/pg-extensions-init.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
+      - ./scripts/docker/pg-audit-init.sql:/docker-entrypoint-initdb.d/02-audit.sql:ro
+      
+      # WAL archiving for backup strategy
+      - pgwal:/var/lib/postgresql/pg_wal
+
+    # Resource Limits
+    mem_limit: ${DB_MEM_LIMIT:-2g}
+    deploy:
+      resources:
+        limits:
+          cpus: ${DB_CPUS:-2}
+          memory: ${DB_MEM_LIMIT:-2g}
+        reservations:
+          cpus: '1'
+          memory: 1g
+
+    # Network
+    networks:
+      - hunterops-backend
+
+    # Logging
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  # ===================================================================
+  # Redis 7: Cache + Session Store + Rate Limiting
+  # ===================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: hunterops-redis
+    restart: unless-stopped
+    init: true
+    
+    # Command with persistence disabled (use volume instead)
+    command:
+      - redis-server
+      - --loglevel
+      - notice
+      - --databases
+      - '16'
+      - --maxmemory
+      - '512mb'
+      - --maxmemory-policy
+      - 'allkeys-lru'
+      - --appendonly
+      - 'no'
+      - --save
+      - ''
+      - --bind
+      - '0.0.0.0'
+      - --port
+      - '6379'
+
+    # Health Check
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    # Volumes
+    volumes:
+      - redis-data:/data
+
+    # Resource Limits
+    mem_limit: ${REDIS_MEM_LIMIT:-512m}
+    deploy:
+      resources:
+        limits:
+          cpus: ${REDIS_CPUS:-1}
+          memory: ${REDIS_MEM_LIMIT:-512m}
+        reservations:
+          cpus: '0.5'
+          memory: 256m
+
+    # Network
+    networks:
+      - hunterops-backend
+
+    # Logging
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '3'
+
+  # ===================================================================
+  # HunterOps Engine: Python 3.12 Application Server
+  # ===================================================================
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: '3.12'
+        BUILD_DATE: ${BUILD_DATE:-2026-03-20}
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+    
+    container_name: hunterops-engine
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+
+    # Dependencies
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    # Environment
+    env_file:
+      - .env
+    environment:
+      # Infrastructure
+      HUNTEROPS_HOME: /opt/hunterops
+      HUNTEROPS_ENV: ${HUNTEROPS_ENV:-production}
+      HUNTEROPS_RUNTIME_PROFILE: production
+      HUNTEROPS_MODE: research-loop
+      HUNTEROPS_DB_OPTIONAL: ${HUNTEROPS_DB_OPTIONAL:-0}
+      HUNTEROPS_PREFLIGHT_STRICT: ${HUNTEROPS_PREFLIGHT_STRICT:-1}
+      
+      # Database (Docker DNS)
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-hunterops}
+      POSTGRES_USER: ${POSTGRES_USER:-hunterops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      HUNTEROPS_POSTGRES_DSN: ${HUNTEROPS_POSTGRES_DSN:-}
+      HUNTEROPS_PG_CONNECT_TIMEOUT_SECONDS: ${HUNTEROPS_PG_CONNECT_TIMEOUT_SECONDS:-5}
+      HUNTEROPS_PG_STATEMENT_TIMEOUT_MS: ${HUNTEROPS_PG_STATEMENT_TIMEOUT_MS:-12000}
+      HUNTEROPS_PG_LOCK_TIMEOUT_MS: ${HUNTEROPS_PG_LOCK_TIMEOUT_MS:-3000}
+      HUNTEROPS_PG_IDLE_IN_TX_TIMEOUT_MS: ${HUNTEROPS_PG_IDLE_IN_TX_TIMEOUT_MS:-20000}
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      HUNTEROPS_REDIS_URL: ${HUNTEROPS_REDIS_URL:-redis://redis:6379/0}
+      
+      # Python
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
+      PYTHONPATH: /opt/hunterops
+      PLAYWRIGHT_HEADLESS: 'true'
+      TZ: ${TZ:-UTC}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      STRUCTLOG_ENABLED: 'true'
+      
+      # Performance
+      CONCURRENCY: ${CONCURRENCY:-6}
+      RATE_LIMIT_PER_SEC: ${RATE_LIMIT_PER_SEC:-10}
+      
+      # Security
+      ENABLE_DEBUG: ${ENABLE_DEBUG:-false}
+
+    # Volumes
+    volumes:
+      # Read-only configs
+      - ./config:/opt/hunterops/config:ro
+      - ./templates:/opt/hunterops/templates:ro
+      - ./wordlists:/opt/hunterops/wordlists:ro
+      
+      # Read-write data directories
+      - hunterops-data:/opt/hunterops/data
+      - ./data/logs:/opt/hunterops/data/logs:rw
+      - ./data/evidence:/opt/hunterops/data/evidence:rw
+      - ./data/findings:/opt/hunterops/data/findings:rw
+      - ./data/reports:/opt/hunterops/reports:rw
+      
+      # Cache directory
+      - cache-data:/opt/hunterops/.cache
+
+    # Port Exposure (if needed for FastAPI health checks)
+    # Normalmente pode ser removida se nÃ£o usar FastAPI em produÃ§Ã£o
+    # ports:
+    #   - "127.0.0.1:8000:8000"
+
+    # Health Check
+    healthcheck:
+      test: ['CMD-SHELL', 'python scripts/monitor_status.py --health-check --quiet']
+      interval: 60s
+      timeout: 12s
+      retries: 3
+      start_period: 60s
+
+    # Resource Limits
+    mem_limit: ${ENGINE_MEM_LIMIT:-4g}
+    deploy:
+      resources:
+        limits:
+          cpus: ${ENGINE_CPUS:-3}
+          memory: ${ENGINE_MEM_LIMIT:-4g}
+        reservations:
+          cpus: '1.5'
+          memory: 2g
+
+    # Network
+    networks:
+      - hunterops-backend
+
+    # Logging
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
+
+    # Entry Point
+    command:
+      - python
+      - main.py
+      - --mode
+      - research-loop
+      - --config
+      - config/engine.yaml
+      - --targets-file
+      - ${TARGETS_FILE:-data/targets/in_scope_hosts.txt}
+      - --research-out-dir
+      - /opt/hunterops/reports/research
+      - --interval-seconds
+      - ${RUN_INTERVAL_SECONDS:-300}
+      - --max-runtime-seconds
+      - ${RUN_MAX_SECONDS:-1200}
+      - --jitter-seconds
+      - ${RUN_JITTER_SECONDS:-20}
+      - --max-backoff-seconds
+      - ${RUN_MAX_BACKOFF_SECONDS:-300}
+
+  # ===================================================================
+  # PostgreSQL Backup Service: Periodic backups (default every 24h)
+  # ===================================================================
+  db-backup:
+    image: postgres:16-alpine
+    container_name: hunterops-db-backup
+    restart: unless-stopped
+    init: true
+
+    # Environment
+    env_file:
+      - .env
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-hunterops}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      PGDATABASE: ${POSTGRES_DB:-hunterops}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_DAEMON_MODE: ${BACKUP_DAEMON_MODE:-true}
+      BACKUP_RUN_IMMEDIATELY: ${BACKUP_RUN_IMMEDIATELY:-true}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_PATH: /backups
+
+    # Dependencies
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # Volumes
+    volumes:
+      - pgbackups:/backups
+      - ./scripts/docker/backup-entrypoint.sh:/backup-entrypoint.sh:ro
+
+    # Resource Limits
+    mem_limit: 512m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
+
+    # Network
+    networks:
+      - hunterops-backend
+
+    # Logging
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+    # Entrypoint
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        chmod +x /backup-entrypoint.sh
+        exec /backup-entrypoint.sh
+
+  # ===================================================================
+  # Prometheus (Optional): Metrics Collection
+  # ===================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: hunterops-prometheus
+    restart: unless-stopped
+    init: true
+
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+    ports:
+      - '127.0.0.1:9090:9090'
+
+    networks:
+      - hunterops-backend
+
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+networks:
+  hunterops-backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  # Database
+  pgdata:
+    driver: local
+  pgwal:
+    driver: local
+  pgbackups:
+    driver: local
+
+  # Application
+  hunterops-data:
+    driver: local
+  cache-data:
+    driver: local
+
+  # Monitoring
+  prometheus-data:
+    driver: local
+  redis-data:
+    driver: local

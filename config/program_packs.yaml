@@ -1,0 +1,66 @@
+program_packs:
+  - name: api_enterprise_pack
+    scope:
+      - "*.example.com"
+      - "api.example.com"
+    critical_endpoints:
+      - "/api/me"
+      - "/api/profile"
+      - "/api/users"
+      - "/api/admin/users"
+      - "/api/invoices"
+      - "/api/checkout"
+      - "/api/plan/upgrade"
+    wordlist: "wordlists/common.txt"
+    allowed_checks:
+      - cve_intel
+      - cve_matcher
+      - asset_discovery_engine
+      - recon_engine
+      - crawler_intelligent
+      - intelligent_crawler
+      - javascript_deep_analysis
+      - deep_js_analyzer
+      - deep_js_intelligence
+      - hidden_route_discovery
+      - hidden_route_detector
+      - parameter_enum
+      - surface_expansion
+      - js_route_mapper
+      - surface_mapper
+      - attack_graph_builder
+      - parameter_intelligence
+      - smart_payload_engine
+      - context_aware_fuzzing_engine
+      - behavioral_diff_engine
+      - idor_intelligence
+      - vulnerability_detection_engine
+      - vulnerability_correlation_engine
+      - evidence_collector
+      - vulnerability_engine
+      - idor_detection_engine
+      - response_diff_engine
+      - poc_generator
+      - report_builder
+      - security_report_builder
+      - recon
+      - fingerprint
+      - scan
+      - fuzz
+      - fuzz_smart
+      - auth_compare
+      - idor_auto
+      - role_access
+      - auth_token_tests
+      - graphql_scan
+      - race_basic
+      - payment_logic
+      - deep_endpoint
+      - stateful_flows
+    blocked_checks:
+      - takeover
+    top_bug_classes:
+      - idor
+      - authz
+      - business_logic
+      - token_weakness

@@ -1,0 +1,22 @@
+id: exposed-dotenv-secrets-critical
+
+info:
+  name: Exposed .env Secrets
+  author: hunterops
+  severity: critical
+  description: Detects publicly accessible .env files containing sensitive keys.
+  tags: misconfig,exposure,secrets,critical
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: regex
+        part: body
+        regex:
+          - "(?m)^(APP_KEY|APP_SECRET|DB_PASSWORD|AWS_SECRET_ACCESS_KEY|HUNTEROPS_POSTGRES_DSN)\\s*="

@@ -1,0 +1,21 @@
+id: smoke-critical-home-200
+
+info:
+  name: Smoke Critical Home 200 (Test Only)
+  author: hunterops
+  severity: critical
+  description: >
+    Smoke-test template that intentionally matches any homepage responding with HTTP 200.
+    Use only in controlled validation runs.
+  tags: smoke,test,critical
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: true
+    max-redirects: 2
+    matchers:
+      - type: status
+        status:
+          - 200

@@ -1,0 +1,783 @@
+# 📨 DISCORD NOTIFICATION EXAMPLES
+
+**Exemplos de payloads reais para integração com Discord Webhooks**
+
+---
+
+## 1. PAYLOAD STRUCTURE BASE
+
+```json
+{
+  "username": "Pinguinho",
+  "avatar_url": "https://cdn.discordapp.com/avatars/...",
+  "content": "OPTIONAL: Mention @channel for critical",
+  "embeds": [
+    {
+      "title": "Finding Title",
+      "description": "Optional description",
+      "color": 15158332,
+      "fields": [{"name": "...", "value": "...", "inline": false}],
+      "timestamp": "2026-03-20T15:30:45Z"
+    }
+  ]
+}
+```
+
+**Cores Discord (Decimal)**:
+- 🔴 RED (Critical): `15158332`
+- 🟡 ORANGE (High): `16753920`
+- 🟠 YELLOW (Medium): `16776960`
+- 🔵 BLUE (Info): `3447003`
+
+---
+
+## 2. RECON CHANNEL: NEW SUBDOMAIN DISCOVERED
+
+```json
+{
+  "username": "Pinguinho",
+  "avatar_url": "https://raw.githubusercontent.com/hunterops/assets/main/pinguinho.png",
+  "content": "🔍 New discoveries in HackerOne program",
+  "embeds": [
+    {
+      "title": "🔍 Recon Discovery - New Subdomains",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "**HackerOne: Acme Corp**",
+          "inline": true
+        },
+        {
+          "name": "Domain",
+          "value": "`acme.com`",
+          "inline": true
+        },
+        {
+          "name": "Subdomains Found",
+          "value": "`api.acme.com`\n`admin.acme.com`\n`internal.acme.com`\n`cdn.acme.com`",
+          "inline": false
+        },
+        {
+          "name": "Count",
+          "value": "4 new",
+          "inline": true
+        },
+        {
+          "name": "Confidence",
+          "value": "95%",
+          "inline": true
+        },
+        {
+          "name": "Discovery Method",
+          "value": "Subfinder passive enumeration + HTTPX validation",
+          "inline": false
+        },
+        {
+          "name": "Status Codes",
+          "value": "`200 - api.acme.com`\n`401 - admin.acme.com`\n`403 - internal.acme.com`\n`200 - cdn.acme.com`",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T15:30:45Z"
+    }
+  ]
+}
+```
+
+---
+
+## 3. RECON CHANNEL: TECHNOLOGY FINGERPRINT
+
+```json
+{
+  "username": "Pinguinho",
+  "content": "🔎 Technology fingerprints identified",
+  "embeds": [
+    {
+      "title": "🔎 Technology Stack Identified",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Target",
+          "value": "`api.acme.com`",
+          "inline": true
+        },
+        {
+          "name": "Port",
+          "value": "`443 (HTTPS)`",
+          "inline": true
+        },
+        {
+          "name": "Technologies",
+          "value": "• **Server**: nginx/1.21.0\n• **Language**: Node.js v18\n• **Framework**: Express.js\n• **Database**: MongoDB (detected via headers)\n• **CDN**: Cloudflare\n• **WAF**: Cloudflare WAF",
+          "inline": false
+        },
+        {
+          "name": "Interesting Headers",
+          "value": "`X-Powered-By: Express`\n`X-Frame-Options: DENY`\n`Strict-Transport-Security: max-age=31536000`",
+          "inline": false
+        },
+        {
+          "name": "Certificate Issuer",
+          "value": "`DigiCert Inc` (valid until 2026-12-31)",
+          "inline": true
+        },
+        {
+          "name": "Next Actions",
+          "value": "Escalating to technology-specific exploitation",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T15:35:12Z"
+    }
+  ]
+}
+```
+
+---
+
+## 4. RECON CHANNEL: NEW ENDPOINTS FOUND
+
+```json
+{
+  "username": "Pinguinho",
+  "embeds": [
+    {
+      "title": "🗺️ API Endpoints Mapped",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Application",
+          "value": "`api.acme.com - REST API`",
+          "inline": false
+        },
+        {
+          "name": "Endpoints Discovered",
+          "value": "```\nGET  /api/v1/users\nGET  /api/v1/users/{id}\nPOST /api/v1/users\nPUT  /api/v1/users/{id}\nDEL  /api/v1/users/{id}\n\nGET  /api/v1/products\nGET  /api/v1/products/{id}\nPOST /api/v1/products\n\nGET  /api/v1/orders\nGET  /api/v1/orders/{id}\n\nPOST /api/v1/auth/login\nPOST /api/v1/auth/logout\nPOST /api/v1/auth/refresh\n\nGET  /api/v1/me\nPUT  /api/v1/me\nGET  /api/v1/me/settings\n```",
+          "inline": false
+        },
+        {
+          "name": "Auth-Required Endpoints",
+          "value": "14/18 endpoints require Bearer token",
+          "inline": true
+        },
+        {
+          "name": "Total Endpoints",
+          "value": "18",
+          "inline": true
+        },
+        {
+          "name": "Attack Surface Priority",
+          "value": "🎯 HIGH - Multiple user-centric endpoints with ID parameters",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T15:40:30Z"
+    }
+  ]
+}
+```
+
+---
+
+## 5. FINDINGS CHANNEL: CRITICAL - RCE
+
+```json
+{
+  "username": "Pinguinho",
+  "content": "@channel ⚠️ **CRITICAL FINDING DETECTED** - Remote Code Execution (RCE)",
+  "embeds": [
+    {
+      "title": "🔴 Remote Code Execution (RCE)",
+      "color": 15158332,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "**HackerOne: Acme Corp**",
+          "inline": true
+        },
+        {
+          "name": "Severity",
+          "value": "**CRITICAL** 🔴",
+          "inline": true
+        },
+        {
+          "name": "Endpoint",
+          "value": "`POST /api/v1/process`",
+          "inline": false
+        },
+        {
+          "name": "Vulnerability Type",
+          "value": "Command Injection → Remote Code Execution",
+          "inline": true
+        },
+        {
+          "name": "Confidence Score",
+          "value": "**0.92** (92%)",
+          "inline": true
+        },
+        {
+          "name": "CVE Reference",
+          "value": "Similar to CVE-2024-12345 (Node.js child_process)",
+          "inline": true
+        },
+        {
+          "name": "Related CWE",
+          "value": "CWE-78: Improper Neutralization of Special Elements used in an OS Command",
+          "inline": true
+        },
+        {
+          "name": "Attack Vector",
+          "value": "**HTTP POST** parameter `cmd` accepts arbitrary shell commands without sanitization",
+          "inline": false
+        },
+        {
+          "name": "Proof of Concept",
+          "value": "```bash\ncurl -X POST https://api.acme.com/v1/process \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...\" \\\n  -d '{\"cmd\": \"id\"}'\n\n# Output:\n# uid=33(www-data) gid=33(www-data) groups=33(www-data)\n```",
+          "inline": false
+        },
+        {
+          "name": "Impact",
+          "value": "• Complete server compromise\n• Arbitrary code execution as web server user\n• Potential lateral movement to database\n• Data exfiltration",
+          "inline": false
+        },
+        {
+          "name": "Validation Evidence",
+          "value": "[Request Log](https://hunterops.internal/findings/F-2026-001/request) | [Response Capture](https://hunterops.internal/findings/F-2026-001/response) | [Execution Timeline](https://hunterops.internal/findings/F-2026-001/timeline)",
+          "inline": false
+        },
+        {
+          "name": "Heuristic Analysis",
+          "value": "✅ Status code changed (was 405, now 200)\n✅ Response contains command output\n✅ Payload reflection detected\n✅ Behavior stable across 5 retries (no transient errors)",
+          "inline": false
+        },
+        {
+          "name": "LLM Confidence Reasoning",
+          "value": "Response showed consistent command execution pattern and output interpretation. Behavior is stable across retries and deviates from baseline error responses. No evidence of transient network issues or WAF interference.",
+          "inline": false
+        },
+        {
+          "name": "Next Actions",
+          "value": "1. ✅ Automated validation: COMPLETE\n2. ⏳ Awaiting: Manual security review\n3. ⏳ Pending: HackerOne draft creation & submission",
+          "inline": false
+        },
+        {
+          "name": "Created At",
+          "value": "2026-03-20T15:45:30Z",
+          "inline": true
+        },
+        {
+          "name": "Finding ID",
+          "value": "`F-2026-001`",
+          "inline": true
+        }
+      ],
+      "thumbnail": {
+        "url": "https://cdn-icons-png.flaticon.com/512/827/827545.png",
+        "height": 40,
+        "width": 40
+      },
+      "timestamp": "2026-03-20T15:45:30Z"
+    }
+  ]
+}
+```
+
+---
+
+## 6. FINDINGS CHANNEL: HIGH - IDOR
+
+```json
+{
+  "username": "Pinguinho",
+  "content": "@here 🟡 High Severity Finding - IDOR",
+  "embeds": [
+    {
+      "title": "🟡 Insecure Direct Object Reference (IDOR)",
+      "color": 16753920,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "HackerOne: Acme Corp",
+          "inline": true
+        },
+        {
+          "name": "Severity",
+          "value": "**HIGH** 🟡",
+          "inline": true
+        },
+        {
+          "name": "Endpoint",
+          "value": "`GET /api/v1/users/{id}`",
+          "inline": false
+        },
+        {
+          "name": "Vulnerability",
+          "value": "IDOR allows unauthorized access to other users' profiles",
+          "inline": false
+        },
+        {
+          "name": "Confidence",
+          "value": "**0.87** (87%)",
+          "inline": true
+        },
+        {
+          "name": "Attack Method",
+          "value": "Sequential ID enumeration (user_id 1-1000) reveals PII",
+          "inline": true
+        },
+        {
+          "name": "PoC URL",
+          "value": "```\nGET /api/v1/users/42 HTTP/1.1\nHost: api.acme.com\nAuthorization: Bearer <USER_TOKEN>\n\nResponse:\n{\n  \"id\": 42,\n  \"name\": \"John Doe\",\n  \"email\": \"john@victim.com\",\n  \"phone\": \"+1-555-0123\",\n  \"address\": \"123 Main St, Springfield, IL\"\n}\n```",
+          "inline": false
+        },
+        {
+          "name": "Data Exposure",
+          "value": "• User emails (1000+ exposed)\n• Phone numbers (PII)\n• Home addresses\n• Optional: Account creation dates, IP logs",
+          "inline": false
+        },
+        {
+          "name": "Validation Method",
+          "value": "Tested access with 3 different user tokens. All returned unauthorized users' data.",
+          "inline": false
+        },
+        {
+          "name": "Evidence Links",
+          "value": "[Request](url) | [Response](url) | [Screenshots](url)",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T16:01:25Z"
+    }
+  ]
+}
+```
+
+---
+
+## 7. FINDINGS CHANNEL: MEDIUM - EXPOSED ENV VARIABLES
+
+```json
+{
+  "username": "Pinguinho",
+  "embeds": [
+    {
+      "title": "🟠 Sensitive Information Exposure",
+      "color": 16776960,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "HackerOne: Acme Corp",
+          "inline": true
+        },
+        {
+          "name": "Severity",
+          "value": "**MEDIUM** 🟠",
+          "inline": true
+        },
+        {
+          "name": "Finding Type",
+          "value": "Environment Variables Exposed in Bundled JavaScript",
+          "inline": false
+        },
+        {
+          "name": "Affected Resource",
+          "value": "`https://api.acme.com/static/main.js` (line 1234)",
+          "inline": false
+        },
+        {
+          "name": "Exposed Information",
+          "value": "```\nREACT_APP_API_KEY: sk_test_abc123xyz\nREACT_APP_STRIPE_KEY: pk_test_stripe_key\nREACT_APP_SEGMENT_KEY: sentry_dsn_key\n```",
+          "inline": false
+        },
+        {
+          "name": "Impact",
+          "value": "Test API keys exposed (low risk), but indicates build misconfiguration",
+          "inline": false
+        },
+        {
+          "name": "Recommendation",
+          "value": "Replace with environment-specific configuration. Review build pipeline.",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T16:15:48Z"
+    }
+  ]
+}
+```
+
+---
+
+## 8. FINDINGS CHANNEL: INFO - MISSING SECURITY HEADERS
+
+```json
+{
+  "username": "Pinguinho",
+  "embeds": [
+    {
+      "title": "🔵 Missing Security Headers",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "HackerOne: Acme Corp",
+          "inline": true
+        },
+        {
+          "name": "Severity",
+          "value": "**INFO** 🔵",
+          "inline": true
+        },
+        {
+          "name": "Endpoint",
+          "value": "`https://api.acme.com/` (all endpoints)",
+          "inline": false
+        },
+        {
+          "name": "Missing Headers",
+          "value": "• `X-Content-Type-Options: nosniff`\n• `X-Frame-Options: DENY`\n• `X-XSS-Protection: 1; mode=block`",
+          "inline": false
+        },
+        {
+          "name": "Present Headers (Good)",
+          "value": "✅ `Strict-Transport-Security: max-age=31536000`\n✅ `Content-Security-Policy: ...`",
+          "inline": false
+        },
+        {
+          "name": "Recommendation",
+          "value": "Add missing headers to improve defense-in-depth against browser-based attacks.",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T16:22:10Z"
+    }
+  ]
+}
+```
+
+---
+
+## 9. OPERATIONAL CHANNEL: SESSION START
+
+```json
+{
+  "username": "Pinguinho",
+  "content": "✅ Campaign started successfully",
+  "embeds": [
+    {
+      "title": "✅ HunterOps Campaign Started",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Session ID",
+          "value": "`SESSION-2026-03-20-001`",
+          "inline": true
+        },
+        {
+          "name": "Program",
+          "value": "Acme Corp (HackerOne)",
+          "inline": true
+        },
+        {
+          "name": "Scope",
+          "value": "`*.acme.com`, `acme.com`",
+          "inline": false
+        },
+        {
+          "name": "Start Time",
+          "value": "2026-03-20T14:00:00Z",
+          "inline": true
+        },
+        {
+          "name": "Estimated Duration",
+          "value": "~12 hours",
+          "inline": true
+        },
+        {
+          "name": "Initial Level",
+          "value": "Level 1 (Passive Recon)",
+          "inline": true
+        },
+        {
+          "name": "Rate Limit",
+          "value": "10 req/s",
+          "inline": true
+        }
+      ],
+      "timestamp": "2026-03-20T14:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## 10. OPERATIONAL CHANNEL: SESSION COMPLETE
+
+```json
+{
+  "username": "Pinguinho",
+  "content": "🏁 Campaign completed",
+  "embeds": [
+    {
+      "title": "🏁 HunterOps Campaign Completed",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Session ID",
+          "value": "`SESSION-2026-03-20-001`",
+          "inline": true
+        },
+        {
+          "name": "Program",
+          "value": "Acme Corp",
+          "inline": true
+        },
+        {
+          "name": "Duration",
+          "value": "11h 45m",
+          "inline": true
+        },
+        {
+          "name": "Status",
+          "value": "✅ COMPLETE",
+          "inline": true
+        },
+        {
+          "name": "Findings Summary",
+          "value": "🔴 1 Critical\n🟡 3 High\n🟠 5 Medium\n🔵 12 Info",
+          "inline": false
+        },
+        {
+          "name": "Coverage",
+          "value": "• Subdomains scanned: 28\n• Endpoints tested: 142\n• Vulnerabilities confirmed: 9",
+          "inline": false
+        },
+        {
+          "name": "Database",
+          "value": "📊 Report exported to `data/reports/session-2026-03-20-001.json`",
+          "inline": false
+        }
+      ],
+      "timestamp": "2026-03-20T25:45:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## 11. OPERATIONAL CHANNEL: ESCALATION / AGRESSIVITY INCREASE
+
+```json
+{
+  "username": "Pinguinho",
+  "embeds": [
+    {
+      "title": "🔄 Agressivity Level Escalated",
+      "color": 16753920,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "Acme Corp",
+          "inline": true
+        },
+        {
+          "name": "From Level",
+          "value": "1 (Passive)",
+          "inline": true
+        },
+        {
+          "name": "To Level",
+          "value": "2 (Medium)",
+          "inline": true
+        },
+        {
+          "name": "Reason",
+          "value": "Clean rounds threshold reached (1 consecutive round without findings)",
+          "inline": false
+        },
+        {
+          "name": "Changes",
+          "value": "• Rate limit: 5 req/s → 10 req/s\n• Templates: Low+Info → Medium+High severity\n• Fuzzing: Disabled → Enabled\n• Browser automation: Disabled → Enabled",
+          "inline": false
+        },
+        {
+          "name": "Time",
+          "value": "2026-03-20T15:30:00Z",
+          "inline": true
+        }
+      ],
+      "timestamp": "2026-03-20T15:30:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## 12. ERROR CHANNEL: WAF DETECTED / RATE LIMITED
+
+```json
+{
+  "username": "Pinguinho",
+  "content": "⚠️ WAF Detection - Backoff Activated",
+  "embeds": [
+    {
+      "title": "⚠️ Cloudflare WAF Detected",
+      "color": 16753920,
+      "fields": [
+        {
+          "name": "Program",
+          "value": "Target Corp",
+          "inline": true
+        },
+        {
+          "name": "Endpoint",
+          "value": "`https://api.target.com/api/v1/upload`",
+          "inline": true
+        },
+        {
+          "name": "HTTP Status",
+          "value": "`429 Too Many Requests`",
+          "inline": true
+        },
+        {
+          "name": "Consecutive Hits",
+          "value": "2",
+          "inline": true
+        },
+        {
+          "name": "Response Headers",
+          "value": "```\nServer: cloudflare\nCf-Ray: 8a9b8c7d6e5f4a3\n```",
+          "inline": false
+        },
+        {
+          "name": "Action Taken",
+          "value": "⏳ Exponential backoff initiated\n• Retry 1: Wait 5 seconds\n• Retry 2: Wait 10 seconds\n• Retry 3: Wait 30 seconds\n• After 3 failures: SKIP endpoint",
+          "inline": false
+        },
+        {
+          "name": "Current Rate Limit",
+          "value": "5 req/s (was 10 req/s before detection)",
+          "inline": true
+        }
+      ],
+      "timestamp": "2026-03-20T16:30:45Z"
+    }
+  ]
+}
+```
+
+---
+
+## 13. Python Integration Code
+
+```python
+# hunterops/discord_templates.py
+
+DISCORD_COLORS = {
+    "critical": 15158332,  # RED
+    "high": 16753920,      # ORANGE
+    "medium": 16776960,    # YELLOW
+    "low": 3447003,        # BLUE
+    "info": 3447003,       # BLUE
+}
+
+DISCORD_EMOJIS = {
+    "critical": "🔴",
+    "high": "🟡",
+    "medium": "🟠",
+    "low": "🔵",
+    "info": "🔵",
+}
+
+def create_finding_embed(finding: dict, confidence: float, rationale: str) -> dict:
+    """Cria embed formatado para finding."""
+    
+    severity = finding.get("severity", "info")
+    
+    embed = {
+        "title": f"{DISCORD_EMOJIS[severity]} {finding.get('vulnerability_type', 'Unknown').upper()}",
+        "color": DISCORD_COLORS[severity],
+        "fields": [
+            {"name": "Program", "value": f"**{finding.get('program', 'Unknown')}**", "inline": True},
+            {"name": "Severity", "value": severity.upper(), "inline": True},
+            {"name": "Endpoint", "value": f"`{finding.get('endpoint', 'N/A')}`", "inline": False},
+            {"name": "Confidence", "value": f"**{confidence:.0%}**", "inline": True},
+            {"name": "Rationale", "value": rationale[:500], "inline": False},
+            {"name": "Evidence", "value": "[Request](link) | [Response](link)", "inline": False},
+        ],
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    
+    return embed
+
+def create_discord_payload(
+    embeds: list[dict],
+    content: str | None = None,
+    username: str = "Pinguinho",
+) -> dict:
+    """Cria payload final para Discord."""
+    
+    payload = {
+        "username": username,
+        "embeds": embeds,
+    }
+    
+    if content:
+        payload["content"] = content
+    
+    return payload
+```
+
+---
+
+## 14. Webhook URLs Configuration
+
+```yaml
+# config/discord_webhooks.yaml
+
+discord:
+  enabled: true
+  bot_name: "Pinguinho"
+  
+  recon_webhook_url: "${DISCORD_RECON_WEBHOOK}"
+  recon_webhook_env: "DISCORD_RECON_WEBHOOK"
+  
+  findings_webhook_url: "${DISCORD_FINDINGS_WEBHOOK}"
+  findings_webhook_env: "DISCORD_FINDINGS_WEBHOOK"
+  
+  operations_webhook_url: "${DISCORD_OPS_WEBHOOK}"
+  operations_webhook_env: "DISCORD_OPS_WEBHOOK"
+  
+  errors_webhook_url: "${DISCORD_ERRORS_WEBHOOK}"
+  errors_webhook_env: "DISCORD_ERRORS_WEBHOOK"
+  
+  timeout_seconds: 4.0
+  max_concurrent: 4
+  
+  # Deduplication
+  recon_dedupe_ttl_seconds: 1800  # 30 min
+  findings_dedupe_ttl_seconds: 86400  # 24 hours
+```
+
+---
+
+## ✅ Validação de Payloads
+
+```bash
+# Testar webhook localmente
+curl -X POST $DISCORD_RECON_WEBHOOK \
+  -H "Content-Type: application/json" \
+  -d @payload_example.json
+
+# Response esperada:
+# HTTP 204 No Content (sucesso)
+```
+
+---
+
+**Referência**: Adapte os `color`, `name`, `value` dos fields conforme sua realidade operacional.

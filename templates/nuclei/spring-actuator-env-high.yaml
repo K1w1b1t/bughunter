@@ -1,0 +1,25 @@
+id: spring-actuator-env-exposed-high
+
+info:
+  name: Spring Actuator Env Endpoint Exposed
+  author: hunterops
+  severity: high
+  description: Detects publicly exposed Spring Boot environment endpoints.
+  tags: spring,actuator,misconfig,high
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/env"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "propertySources"
+          - "activeProfiles"
+        condition: or

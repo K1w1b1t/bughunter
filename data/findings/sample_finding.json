@@ -1,0 +1,63 @@
+{
+  "id": "F-2026-0001",
+  "title": "IDOR in invoice endpoint leaks customer billing data",
+  "summary": "An authenticated user can access another account invoice by changing invoice_id.",
+  "program": "example-public-program",
+  "asset": "api.example.com",
+  "surface": "api",
+  "status": "validated",
+  "endpoint": "GET /v1/invoices/{invoice_id}",
+  "parameter": "invoice_id",
+  "taxonomy": {
+    "cwe": ["CWE-639", "CWE-285"],
+    "cvss": {
+      "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+      "base_score": 7.1,
+      "severity": "high"
+    },
+    "owasp_refs": ["API1:2023", "WSTG-ATHZ-02", "V4.1"],
+    "mitre_attack": {
+      "applicable": true,
+      "techniques": ["T1190"],
+      "notes": "Exploitation occurs through external exposed application functionality."
+    }
+  },
+  "reproduction": {
+    "verified": true,
+    "success_rate": 1.0,
+    "steps": "1. Login as low-privileged user.\n2. Request GET /v1/invoices/1001.\n3. Change ID to another tenant invoice and resend.\n4. Observe unauthorized invoice data in response."
+  },
+  "business_impact": {
+    "validated": true,
+    "statement": "Unauthorized cross-tenant access to sensitive billing data can create regulatory, legal, and trust impact.",
+    "proof_artifacts": [
+      "data/evidence/F-2026-0001/response.txt"
+    ]
+  },
+  "evidence": {
+    "request_file": "data/evidence/F-2026-0001/request.txt",
+    "response_file": "data/evidence/F-2026-0001/response.txt",
+    "timestamp_utc": "2026-03-04T14:00:00Z",
+    "sha256": "bdc15f60d06a1bab268e673f30986fc5495f7db3336e36d29fbae974b026e50b",
+    "tool_versions": {
+      "burp_suite": "2026.1",
+      "httpx": "1.6.8"
+    }
+  },
+  "risk_factors": {
+    "technical_severity": 78,
+    "exploitability": 80,
+    "asset_criticality": 75,
+    "acceptance_likelihood": 82
+  },
+  "validation": {
+    "control_check_passed": true,
+    "negative_test_passed": true,
+    "notes": "Control request with owned invoice succeeded and cross-tenant request exposed unauthorized data."
+  },
+  "timeline": {
+    "first_seen_utc": "2026-03-04T13:40:00Z",
+    "submitted_utc": "2026-03-04T16:10:00Z"
+  },
+  "remediation": "Enforce object ownership authorization on every invoice access path and add authorization unit/integration tests."
+}

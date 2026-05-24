@@ -1,0 +1,37 @@
+programs:
+  - name: hackerone-initial-scope
+    platform: hackerone
+    kyc_required: false
+    rules_of_engagement: "Automation allowed only for authorized in-scope assets and safe/non-destructive checks."
+    in_scope:
+      - "target-demo.com"
+      - "*.target-demo.com"
+      - "api.target-demo.com"
+    out_of_scope:
+      - "admin.target-demo.com"
+      - "staging.target-demo.com"
+      - "dev.target-demo.com"
+    per_host_rpm: 60
+    per_target_rpm: 30
+    concurrency_per_host: 2
+    allowed_hours:
+      - "00:00-23:59"
+    timezone: "UTC"
+    allow_internal: false
+    allowed_modules:
+      - idor
+      - bac_advanced
+      - sqli
+      - ssti
+      - xss
+      - lfi
+      - sensitive_misconfig
+      - info_leak
+    blocked_modules:
+      - rce
+    blocked_paths:
+      - "/checkout"
+      - "/payment"
+      - "/billing"
+      - "/kyc"
+    notes: "Baseline inicial para programa HackerOne. Ajuste hosts, limites e regras conforme o escopo oficial."

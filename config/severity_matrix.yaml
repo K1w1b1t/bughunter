@@ -1,0 +1,13 @@
+severity:
+  critical:
+    cvss_min: 9.0
+    examples: ["rce", "auth bypass to admin", "critical data exfiltration"]
+  high:
+    cvss_min: 7.0
+    examples: ["idor with sensitive data", "ssrf with impact", "stored xss in privileged context"]
+  medium:
+    cvss_min: 4.0
+    examples: ["reflected xss", "limited data exposure", "rate limit bypass"]
+  low:
+    cvss_min: 0.1
+    examples: ["missing security headers", "information disclosure"]

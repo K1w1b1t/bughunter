@@ -1,0 +1,201 @@
+﻿services:
+  db:
+    image: postgres:15-alpine
+    container_name: hunterops-db
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hunter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunter}
+      POSTGRES_DB: ${POSTGRES_DB:-hunterops}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hunter} -d ${POSTGRES_DB:-hunterops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: ${DB_MEM_LIMIT:-1g}
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPUS:-1.0}"
+          memory: ${DB_MEM_LIMIT:-1g}
+    networks:
+      - hunterops-internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: hunterops-redis
+    restart: unless-stopped
+    init: true
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    volumes:
+      - redis-data:/data
+    mem_limit: ${REDIS_MEM_LIMIT:-256m}
+    deploy:
+      resources:
+        limits:
+          cpus: "${REDIS_CPUS:-0.5}"
+          memory: ${REDIS_MEM_LIMIT:-256m}
+    networks:
+      - hunterops-internal
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hunterops-app
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      HUNTEROPS_HOME: /opt/hunterops
+      HUNTEROPS_ENV: ${HUNTEROPS_ENV:-production}
+      HUNTEROPS_RUNTIME_PROFILE: production
+      HUNTEROPS_MODE: research-loop
+      HUNTEROPS_DB_OPTIONAL: ${HUNTEROPS_DB_OPTIONAL:-0}
+      HUNTEROPS_PREFLIGHT_STRICT: ${HUNTEROPS_PREFLIGHT_STRICT:-1}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-hunterops}
+      POSTGRES_USER: ${POSTGRES_USER:-hunter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunter}
+      HUNTEROPS_POSTGRES_DSN: ${HUNTEROPS_POSTGRES_DSN:-}
+      HUNTEROPS_PG_CONNECT_TIMEOUT_SECONDS: ${HUNTEROPS_PG_CONNECT_TIMEOUT_SECONDS:-5}
+      HUNTEROPS_PG_STATEMENT_TIMEOUT_MS: ${HUNTEROPS_PG_STATEMENT_TIMEOUT_MS:-12000}
+      HUNTEROPS_PG_LOCK_TIMEOUT_MS: ${HUNTEROPS_PG_LOCK_TIMEOUT_MS:-3000}
+      HUNTEROPS_PG_IDLE_IN_TX_TIMEOUT_MS: ${HUNTEROPS_PG_IDLE_IN_TX_TIMEOUT_MS:-20000}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      HUNTEROPS_REDIS_URL: ${HUNTEROPS_REDIS_URL:-redis://redis:6379/0}
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PLAYWRIGHT_HEADLESS: "true"
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./config:/opt/hunterops/config:ro
+      - ./templates:/opt/hunterops/templates:ro
+      - ./wordlists:/opt/hunterops/wordlists:ro
+      - hunterops-data:/opt/hunterops/data
+      - ./data/targets:/opt/hunterops/data/targets:rw
+      - hunterops-reports:/opt/hunterops/reports
+    command:
+      [
+        "python",
+        "main.py",
+        "--mode",
+        "research-loop",
+        "--config",
+        "config/engine.yaml",
+        "--targets-file",
+        "${TARGETS_FILE:-data/targets/in_scope_hosts.txt}",
+        "--research-out-dir",
+        "/opt/hunterops/reports/research",
+        "--interval-seconds",
+        "${RUN_INTERVAL_SECONDS:-300}",
+        "--max-runtime-seconds",
+        "${RUN_MAX_SECONDS:-1200}",
+        "--jitter-seconds",
+        "${RUN_JITTER_SECONDS:-20}",
+        "--max-backoff-seconds",
+        "${RUN_MAX_BACKOFF_SECONDS:-300}"
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "python scripts/monitor_status.py --health-check --quiet"]
+      interval: 60s
+      timeout: 12s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    mem_limit: ${APP_MEM_LIMIT:-2g}
+    deploy:
+      resources:
+        limits:
+          cpus: "${APP_CPUS:-1.5}"
+          memory: ${APP_MEM_LIMIT:-2g}
+    networks:
+      - hunterops-internal
+      - hunterops-egress
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hunterops-monitor
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      HUNTEROPS_HOME: /opt/hunterops
+      HUNTEROPS_ENV: ${HUNTEROPS_ENV:-production}
+      HUNTEROPS_RUNTIME_PROFILE: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-hunterops}
+      POSTGRES_USER: ${POSTGRES_USER:-hunter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunter}
+      HUNTEROPS_POSTGRES_DSN: ${HUNTEROPS_POSTGRES_DSN:-}
+      HUNTEROPS_REDIS_URL: ${HUNTEROPS_REDIS_URL:-redis://redis:6379/0}
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      TZ: ${TZ:-UTC}
+    volumes:
+      - hunterops-data:/opt/hunterops/data
+      - ./data/targets:/opt/hunterops/data/targets:rw
+      - hunterops-reports:/opt/hunterops/reports
+    command: ["python", "scripts/monitor_status.py", "--interval-hours", "${MONITOR_INTERVAL_HOURS:-6}"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    mem_limit: ${MONITOR_MEM_LIMIT:-256m}
+    deploy:
+      resources:
+        limits:
+          cpus: "${MONITOR_CPUS:-0.5}"
+          memory: ${MONITOR_MEM_LIMIT:-256m}
+    networks:
+      - hunterops-internal
+      - hunterops-egress
+
+volumes:
+  pgdata:
+  redis-data:
+  hunterops-data:
+  hunterops-reports:
+
+networks:
+  hunterops-internal:
+    driver: bridge
+    internal: true
+  hunterops-egress:
+    driver: bridge

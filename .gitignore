@@ -1,0 +1,55 @@
+# Environment
+.env
+config/signer.key
+config/scope.json
+config/scope_unsigned.generated.json
+config/vault.yaml
+data/sessions.yaml
+data/runtime/runbook_override.json
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+
+# Generated operational data
+data/raw/*
+data/processed/*
+data/reports/*
+data/findings/backlog_gaps.json
+data/reports/coverage_report.json
+data/reports/weekly_kpis.json
+data/reports/top_priority_queue.json
+data/reports/delta_recon.json
+data/reports/daily_priority_queue.json
+data/reports/nuclei_curation.json
+data/processed/endpoints_catalog.json
+data/processed/auth_surface.json
+data/findings/business_logic_hypotheses.json
+data/processed/*_storage_state.json
+data/reports/engine/*
+!data/reports/engine/.gitkeep
+data/reports/platform_sync/*
+!data/reports/platform_sync/.gitkeep
+data/reports/engine/poc_kits/*
+data/reports/engine/delta_first_queue.json
+data/reports/engine/role_baseline.json
+data/reports/engine/role_baseline_diff.json
+data/evidence/engine/*
+tools/node/node_modules/
+tools/native/*.exe
+tools/native/*.o
+tools/native/*.obj
+tools/native/*.out
+
+# Keep placeholders and baseline examples
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/reports/.gitkeep
+!data/findings/raw_findings.jsonl
+!data/findings/sample_finding.json
+!data/findings/triaged_findings.jsonl
+!data/findings/submissions.jsonl

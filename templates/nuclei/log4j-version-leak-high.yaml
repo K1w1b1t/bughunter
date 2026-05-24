@@ -1,0 +1,25 @@
+id: log4j-vulnerable-version-indicator-high
+
+info:
+  name: Log4j Potentially Vulnerable Version Leak
+  author: hunterops
+  severity: high
+  description: >
+    Flags endpoints disclosing log4j version strings that may indicate vulnerable branches
+    (for example, 2.0.0 through 2.17.0). Validate manually before reporting.
+  tags: log4j,cve-2021-44228,infoleak,high
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/actuator/configprops"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: regex
+        part: body
+        regex:
+          - "(?i)log4j[^\\n\\r]{0,120}2\\.(0|1[0-7])\\."

@@ -1,0 +1,12 @@
+{
+  "name": "hunterops-node-tools",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "spa-probe": "node spa_probe.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.54.0"
+  }
+}

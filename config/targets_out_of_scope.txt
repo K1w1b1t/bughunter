@@ -1,0 +1,25 @@
+# Global out-of-scope denylist for scope ingestion.
+# One pattern per line. Supports exact domains and wildcard domains.
+# Examples:
+# *.staging.example.com
+# admin.example.com
+*.gov.br
+*.gov.uk
+*.gov.au
+*.gov.ca
+*.gov.in
+*.gov.za
+*.gob.es
+*.gouv.fr
+*.bund.de
+*.europa.eu
+*.mil.br
+*.army.mil
+*.navy.mil
+*.airforce.mil
+*.marines.mil
+*.hhs.gov
+*.nih.gov
+*.cdc.gov
+*.fda.gov
+*.who.int
